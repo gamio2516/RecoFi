@@ -22,6 +22,8 @@ class TransactionRepository(context: Context) {
                         confirmed = item.optBoolean("confirmed"),
                         recurringId = if (item.has("recurringId")) item.getLong("recurringId") else null,
                         paymentSourceId = item.optString("paymentSourceId", "rakuten"),
+                        reconciledMonth = item.optString("reconciledMonth").ifBlank { null },
+                        suggested = item.optBoolean("suggested", false),
                     )
                 )
             }
@@ -40,6 +42,8 @@ class TransactionRepository(context: Context) {
                 put("confirmed", transaction.confirmed)
                 transaction.recurringId?.let { put("recurringId", it) }
                 put("paymentSourceId", transaction.paymentSourceId)
+                transaction.reconciledMonth?.let { put("reconciledMonth", it) }
+                put("suggested", transaction.suggested)
             })
         }
         preferences.edit().putString(KEY, array.toString()).apply()

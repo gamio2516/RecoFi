@@ -21,20 +21,87 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     val notesBySource = _notesBySource.asStateFlow()
     private val _recurringExpenses = MutableStateFlow(settingsRepository.loadRecurringExpenses())
     val recurringExpenses = _recurringExpenses.asStateFlow()
-    private val _monthlyBudget = MutableStateFlow(settingsRepository.loadMonthlyBudget())
+    private val _monthlyBudget = MutableStateFlow(settingsRepository.loadMonthlyBudgets())
     val monthlyBudget = _monthlyBudget.asStateFlow()
+    private val _defaultMonthlyBudget = MutableStateFlow(settingsRepository.loadDefaultMonthlyBudget())
+    val defaultMonthlyBudget = _defaultMonthlyBudget.asStateFlow()
     private val _paymentSources = MutableStateFlow(initialSources)
     val paymentSources = _paymentSources.asStateFlow()
+    private val _lockedMonths = MutableStateFlow(settingsRepository.loadLockedMonths())
+    val lockedMonths = _lockedMonths.asStateFlow()
+    private val _importedFileHashes = MutableStateFlow(settingsRepository.loadImportedFileHashes())
+    private val _reconciliationProgress = MutableStateFlow(settingsRepository.loadReconciliationProgress())
+    val reconciliationProgress = _reconciliationProgress.asStateFlow()
+    private val _importedStatements = MutableStateFlow(settingsRepository.loadImportedStatements())
+    val importedStatements = _importedStatements.asStateFlow()
 
     init { ensureRecurringFor(YearMonth.now()) }
 
     fun addTransaction(amount: Int, category: String, note: String, usedAt: Long, paymentSourceId: String, id: Long? = null) {
         val item = Transaction(id ?: System.currentTimeMillis(), amount, category, note, usedAt, paymentSourceId = paymentSourceId)
-        updateTransactions(if (id == null) _transactions.value + item else _transactions.value.map { if (it.id == id) item.copy(confirmed = it.confirmed, recurringId = it.recurringId) else it })
+        updateTransactions(if (id == null) _transactions.value + item else _transactions.value.map { if (it.id == id) item.copy(confirmed = it.confirmed, recurringId = it.recurringId, reconciledMonth = it.reconciledMonth, suggested = it.suggested) else it })
     }
 
     fun deleteTransaction(id: Long) = updateTransactions(_transactions.value.filterNot { it.id == id })
-    fun toggleConfirmed(id: Long) = updateTransactions(_transactions.value.map { if (it.id == id) it.copy(confirmed = !it.confirmed) else it })
+    fun toggleConfirmed(id: Long) {
+        val target = _transactions.value.firstOrNull { it.id == id } ?: return
+        val usedMonth = target.yearMonth().toString()
+        if (target.reconciledMonth in _lockedMonths.value || usedMonth in _lockedMonths.value) return
+        updateTransactions(_transactions.value.map { if (it.id == id) it.copy(confirmed = !it.confirmed, reconciledMonth = if (it.confirmed) null else it.reconciledMonth, suggested = if (!it.confirmed) false else it.suggested) else it })
+    }
+    fun confirmTransactions(ids: Set<Long>, statementMonth: YearMonth) {
+        if (ids.isEmpty()) return
+        if (statementMonth.toString() in _lockedMonths.value) return
+        updateTransactions(_transactions.value.map { if (it.id in ids) it.copy(confirmed = true, reconciledMonth = statementMonth.toString()) else it })
+    }
+    fun setMonthLocked(month: YearMonth, locked: Boolean) {
+        _lockedMonths.value = if (locked) _lockedMonths.value + month.toString() else _lockedMonths.value - month.toString()
+        settingsRepository.saveLockedMonths(_lockedMonths.value)
+    }
+    fun isImportedFile(hash: String): Boolean = hash in _importedFileHashes.value
+    fun recordImportedFile(hash: String) {
+        _importedFileHashes.value = _importedFileHashes.value + hash
+        settingsRepository.saveImportedFileHashes(_importedFileHashes.value)
+    }
+    fun setReconciliationProgress(month: YearMonth, sourceId: String, total: Int, matched: Int) {
+        _reconciliationProgress.value = _reconciliationProgress.value + ("${month}|$sourceId" to (total to matched))
+        settingsRepository.saveReconciliationProgress(_reconciliationProgress.value)
+    }
+    fun saveImportedStatement(statement: ImportedStatement) {
+        _importedStatements.value = _importedStatements.value.filterNot { it.fileHash == statement.fileHash } + statement
+        settingsRepository.saveImportedStatements(_importedStatements.value)
+    }
+    fun linkImportedStatement(fileHash: String, month: YearMonth, sourceId: String): Boolean {
+        if (_importedStatements.value.any { it.fileHash != fileHash && it.statementMonth == month.toString() && it.paymentSourceId == sourceId }) return false
+        _importedStatements.value = _importedStatements.value.map { if (it.fileHash == fileHash) it.copy(statementMonth = month.toString(), paymentSourceId = sourceId) else it }
+        settingsRepository.saveImportedStatements(_importedStatements.value)
+        val entries = _importedStatements.value.firstOrNull { it.fileHash == fileHash }?.entries?.size ?: 0
+        setReconciliationProgress(month, sourceId, entries, 0)
+        return true
+    }
+    fun deleteImportedStatement(fileHash: String) {
+        val target = _importedStatements.value.firstOrNull { it.fileHash == fileHash } ?: return
+        _importedStatements.value = _importedStatements.value.filterNot { it.fileHash == fileHash }
+        settingsRepository.saveImportedStatements(_importedStatements.value)
+        if (target.paymentSourceId.isNotBlank()) {
+            _reconciliationProgress.value = _reconciliationProgress.value - "${target.statementMonth}|${target.paymentSourceId}"
+            settingsRepository.saveReconciliationProgress(_reconciliationProgress.value)
+        }
+        _importedFileHashes.value = _importedFileHashes.value - fileHash - StatementTools.statementFingerprint(target.entries)
+        settingsRepository.saveImportedFileHashes(_importedFileHashes.value)
+    }
+    fun addSuggestedTransactions(entries: List<CardStatementEntry>, sourceId: String, statementMonth: YearMonth) {
+        var updated = _transactions.value
+        entries.forEach { entry ->
+            val usedAt = entry.date.atStartOfDay(ZoneId.systemDefault()).toInstant().toEpochMilli()
+            val exists = updated.any { it.paymentSourceId == sourceId && it.amount == entry.amount && it.usedAt == usedAt && normalizeMerchant(it.note) == normalizeMerchant(entry.merchant) }
+            if (!exists) {
+                val category = _transactions.value.filter { normalizeMerchant(it.note) == normalizeMerchant(entry.merchant) }.groupingBy { it.category }.eachCount().maxByOrNull { it.value }?.key ?: _categories.value.firstOrNull { it == "その他" } ?: _categories.value.lastOrNull().orEmpty()
+                updated += Transaction(System.nanoTime(), entry.amount, category, entry.merchant, usedAt, confirmed = false, paymentSourceId = sourceId, reconciledMonth = statementMonth.toString(), suggested = true)
+            }
+        }
+        updateTransactions(updated)
+    }
 
     fun addCategory(value: String) { val clean = value.trim(); if (_categories.value.size < 15 && clean.isNotEmpty() && clean !in _categories.value) { _categories.value += clean; settingsRepository.saveCategories(_categories.value) } }
     fun deleteCategory(value: String) { if (_categories.value.size > 1) { _categories.value -= value; settingsRepository.saveCategories(_categories.value) } }
@@ -43,7 +110,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun deleteFrequentNote(sourceId: String, value: String) { val updated = _notesBySource.value[sourceId].orEmpty() - value; _notesBySource.value = _notesBySource.value + (sourceId to updated); settingsRepository.saveNotes(sourceId, updated) }
     fun moveFrequentNote(sourceId: String, value: String, offset: Int) { val current = _notesBySource.value[sourceId].orEmpty(); val index = current.indexOf(value); val target = index + offset; if (index >= 0 && target in current.indices) { val updated = current.toMutableList(); val moved = updated.removeAt(index); updated.add(target, moved); _notesBySource.value = _notesBySource.value + (sourceId to updated); settingsRepository.saveNotes(sourceId, updated) } }
 
-    fun setMonthlyBudget(amount: Int) { _monthlyBudget.value = amount.coerceAtLeast(0); settingsRepository.saveMonthlyBudget(_monthlyBudget.value) }
+    fun setMonthlyBudget(month: YearMonth, amount: Int) { val clean = amount.coerceAtLeast(0); _monthlyBudget.value = if (clean == 0) _monthlyBudget.value - month.toString() else _monthlyBudget.value + (month.toString() to clean); settingsRepository.saveMonthlyBudgets(_monthlyBudget.value) }
+    fun setDefaultMonthlyBudget(amount: Int) { _defaultMonthlyBudget.value = amount.coerceAtLeast(0); settingsRepository.saveDefaultMonthlyBudget(_defaultMonthlyBudget.value) }
 
     fun addPaymentSource(name: String) { val clean = name.trim(); if (clean.isNotEmpty() && _paymentSources.value.none { it.name == clean }) { val source = PaymentSource("source_${System.currentTimeMillis()}", clean, false); _paymentSources.value += source; _notesBySource.value = _notesBySource.value + (source.id to emptyList()); settingsRepository.savePaymentSources(_paymentSources.value) } }
     fun deletePaymentSource(id: String) { if (_paymentSources.value.size > 1 && _transactions.value.none { it.paymentSourceId == id } && _recurringExpenses.value.none { it.paymentSourceId == id }) { _paymentSources.value = _paymentSources.value.filterNot { it.id == id }; settingsRepository.savePaymentSources(_paymentSources.value) } }
@@ -109,5 +177,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     private fun Transaction.yearMonth(): YearMonth = YearMonth.from(Instant.ofEpochMilli(usedAt).atZone(ZoneId.systemDefault()))
+    private fun normalizeMerchant(value: String) = value.lowercase().filter { it.isLetterOrDigit() }
     private fun updateTransactions(items: List<Transaction>) { _transactions.value = items.sortedByDescending { it.usedAt }; transactionRepository.save(_transactions.value) }
 }

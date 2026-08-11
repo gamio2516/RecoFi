@@ -3,8 +3,8 @@
     <application
         android:allowBackup="true"
         android:label="RecoFi"
-        android:icon="@drawable/recofi_icon"
-        android:roundIcon="@drawable/recofi_icon"
+        android:icon="@drawable/recofi_app_icon"
+        android:roundIcon="@drawable/recofi_app_icon"
         android:supportsRtl="true"
         android:theme="@style/Theme.CardMemo">
         <activity

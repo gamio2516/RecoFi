@@ -9,6 +9,8 @@ data class Transaction(
     val confirmed: Boolean = false,
     val recurringId: Long? = null,
     val paymentSourceId: String = "rakuten",
+    val reconciledMonth: String? = null,
+    val suggested: Boolean = false,
 )
 
 data class RecurringExpense(
@@ -28,6 +30,27 @@ data class RecurringExpense(
 data class PriceRevision(val effectiveDate: String, val amount: Int)
 
 data class PaymentSource(val id: String, val name: String, val isCard: Boolean)
+
+data class CardStatementEntry(
+    val date: java.time.LocalDate,
+    val amount: Int,
+    val merchant: String,
+    val rawText: String,
+)
+
+data class StatementMatch(
+    val statement: CardStatementEntry,
+    val transactionId: Long?,
+    val score: Int,
+)
+
+data class ImportedStatement(
+    val statementMonth: String,
+    val paymentSourceId: String,
+    val fileName: String,
+    val fileHash: String,
+    val entries: List<CardStatementEntry>,
+)
 
 val DefaultPaymentSources = listOf(
     PaymentSource("rakuten", "楽天カード", true),
