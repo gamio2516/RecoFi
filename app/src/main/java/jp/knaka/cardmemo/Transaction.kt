@@ -52,6 +52,13 @@ data class ImportedStatement(
     val entries: List<CardStatementEntry>,
 )
 
+data class ReconciliationProgress(
+    val imported: Int = 0,
+    val matched: Int = 0,
+    val suggested: Int = 0,
+    val confirmed: Int = 0,
+)
+
 val DefaultPaymentSources = listOf(
     PaymentSource("rakuten", "楽天カード", true),
     PaymentSource("other", "その他の支払い", false),

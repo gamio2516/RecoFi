@@ -53,9 +53,8 @@ object StatementTools {
     }
 
     fun statementFingerprint(entries: List<CardStatementEntry>): String {
-        // PDFのOCR表記とCSVの正式表記が異なっても、同じ請求データとして検知する。
-        val canonical = entries.sortedWith(compareBy<CardStatementEntry> { it.date }.thenBy { it.amount })
-            .joinToString("\n") { "${it.date}|${it.amount}" }
+        val canonical = entries.sortedWith(compareBy<CardStatementEntry> { it.date }.thenBy { it.amount }.thenBy { ReconciliationMatcher.normalizeMerchant(it.merchant) })
+            .joinToString("\n") { "${it.date}|${it.amount}|${ReconciliationMatcher.normalizeMerchant(it.merchant)}" }
         val digest = MessageDigest.getInstance("SHA-256").digest(canonical.toByteArray(StandardCharsets.UTF_8))
         return "statement:" + digest.joinToString("") { "%02x".format(it) }
     }
@@ -150,19 +149,7 @@ object StatementTools {
     }
 
     fun match(entries: List<CardStatementEntry>, transactions: List<Transaction>, sourceId: String): List<StatementMatch> {
-        val candidates = transactions.filter { it.paymentSourceId == sourceId }
-        val usedIds = mutableSetOf<Long>()
-        return entries.map { entry ->
-            val ranked = candidates.asSequence().filter { it.id !in usedIds && it.amount == entry.amount }.map { transaction ->
-                val date = Instant.ofEpochMilli(transaction.usedAt).atZone(ZoneId.systemDefault()).toLocalDate()
-                val dayGap = kotlin.math.abs(java.time.temporal.ChronoUnit.DAYS.between(date, entry.date)).toInt()
-                val noteScore = similarity(normalize(transaction.note), normalize(entry.merchant))
-                val score = 65 + (20 - dayGap * 5).coerceAtLeast(0) + (noteScore * 15).toInt()
-                transaction to score
-            }.filter { it.second >= 75 }.maxByOrNull { it.second }
-            ranked?.first?.let { usedIds += it.id }
-            StatementMatch(entry, ranked?.first?.id, ranked?.second ?: 0)
-        }
+        return ReconciliationMatcher.match(entries, transactions, sourceId)
     }
 
     fun writeMonthlyCsv(output: OutputStream, month: YearMonth, transactions: List<Transaction>, sourceNames: Map<String, String>, sourceId: String? = null) {
@@ -185,12 +172,6 @@ object StatementTools {
     private fun csvCell(value: String): String = if (value.any { it == ',' || it == '"' || it == '\n' || it == '\r' })
         "\"${value.replace("\"", "\"\"")}\"" else value
     private fun normalize(value: String) = value.lowercase().filter { it.isLetterOrDigit() }
-    private fun similarity(a: String, b: String): Double {
-        if (a.isBlank() || b.isBlank()) return 0.0
-        if (a in b || b in a) return 1.0
-        val left = a.windowed(2).toSet(); val right = b.windowed(2).toSet()
-        return left.intersect(right).size.toDouble() / left.union(right).size.coerceAtLeast(1)
-    }
     private val DATE_HEADERS = setOf("利用日", "ご利用日", "利用年月日", "ご利用年月日", "売上日", "日付")
     private val AMOUNT_HEADERS = setOf("利用金額", "ご利用金額", "ご利用額", "今回ご利用金額", "金額", "支払金額")
     private val MERCHANT_HEADERS = setOf("利用店名", "ご利用店名", "利用箇所", "ご利用箇所", "利用店名及び商品名", "ご利用店名及び商品名", "ご利用先", "加盟店名", "利用先")

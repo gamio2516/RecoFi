@@ -53,6 +53,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         if (ids.isEmpty()) return
         if (statementMonth.toString() in _lockedMonths.value) return
         updateTransactions(_transactions.value.map { if (it.id in ids) it.copy(confirmed = true, reconciledMonth = statementMonth.toString()) else it })
+        ids.mapNotNull { id -> _transactions.value.firstOrNull { it.id == id }?.paymentSourceId }.toSet().forEach { sourceId ->
+            val key = "${statementMonth}|$sourceId"
+            val current = _reconciliationProgress.value[key] ?: return@forEach
+            val count = _transactions.value.count { it.confirmed && it.reconciledMonth == statementMonth.toString() && it.paymentSourceId == sourceId }
+            _reconciliationProgress.value = _reconciliationProgress.value + (key to current.copy(confirmed = count.coerceAtMost(current.imported)))
+        }
+        settingsRepository.saveReconciliationProgress(_reconciliationProgress.value)
     }
     fun setMonthLocked(month: YearMonth, locked: Boolean) {
         _lockedMonths.value = if (locked) _lockedMonths.value + month.toString() else _lockedMonths.value - month.toString()
@@ -63,8 +70,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         _importedFileHashes.value = _importedFileHashes.value + hash
         settingsRepository.saveImportedFileHashes(_importedFileHashes.value)
     }
-    fun setReconciliationProgress(month: YearMonth, sourceId: String, total: Int, matched: Int) {
-        _reconciliationProgress.value = _reconciliationProgress.value + ("${month}|$sourceId" to (total to matched))
+    fun setReconciliationProgress(month: YearMonth, sourceId: String, imported: Int, matched: Int, suggested: Int, confirmed: Int) {
+        _reconciliationProgress.value = _reconciliationProgress.value + ("${month}|$sourceId" to ReconciliationProgress(imported, matched, suggested, confirmed))
         settingsRepository.saveReconciliationProgress(_reconciliationProgress.value)
     }
     fun saveImportedStatement(statement: ImportedStatement) {
@@ -76,7 +83,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         _importedStatements.value = _importedStatements.value.map { if (it.fileHash == fileHash) it.copy(statementMonth = month.toString(), paymentSourceId = sourceId) else it }
         settingsRepository.saveImportedStatements(_importedStatements.value)
         val entries = _importedStatements.value.firstOrNull { it.fileHash == fileHash }?.entries?.size ?: 0
-        setReconciliationProgress(month, sourceId, entries, 0)
+        setReconciliationProgress(month, sourceId, entries, 0, 0, 0)
         return true
     }
     fun deleteImportedStatement(fileHash: String) {

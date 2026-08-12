@@ -34,12 +34,12 @@ class AppSettingsRepository(context: Context) {
     fun saveLockedMonths(items: Set<String>) = saveStrings(LOCKED_MONTHS, items.sorted())
     fun loadImportedFileHashes(): Set<String> = loadStrings(IMPORTED_HASHES, emptyList()).toSet()
     fun saveImportedFileHashes(items: Set<String>) = saveStrings(IMPORTED_HASHES, items.toList().takeLast(100))
-    fun loadReconciliationProgress(): Map<String, Pair<Int, Int>> = runCatching {
+    fun loadReconciliationProgress(): Map<String, ReconciliationProgress> = runCatching {
         val json = JSONObject(preferences.getString(RECONCILIATION_PROGRESS, "{}") ?: "{}")
-        json.keys().asSequence().associateWith { key -> val item = json.getJSONObject(key); item.getInt("total") to item.getInt("matched") }
+        json.keys().asSequence().associateWith { key -> val item = json.getJSONObject(key); ReconciliationProgress(item.optInt("imported", item.optInt("total", 0)), item.optInt("matched", 0), item.optInt("suggested", 0), item.optInt("confirmed", 0)) }
     }.getOrDefault(emptyMap())
-    fun saveReconciliationProgress(items: Map<String, Pair<Int, Int>>) {
-        val json = JSONObject(); items.forEach { (key, value) -> json.put(key, JSONObject().apply { put("total", value.first); put("matched", value.second) }) }
+    fun saveReconciliationProgress(items: Map<String, ReconciliationProgress>) {
+        val json = JSONObject(); items.forEach { (key, value) -> json.put(key, JSONObject().apply { put("imported", value.imported); put("matched", value.matched); put("suggested", value.suggested); put("confirmed", value.confirmed) }) }
         preferences.edit().putString(RECONCILIATION_PROGRESS, json.toString()).apply()
     }
     fun loadImportedStatements(): List<ImportedStatement> = runCatching {

@@ -1,6 +1,7 @@
 package jp.knaka.cardmemo
 
 import android.os.Bundle
+import android.app.Activity
 import android.provider.OpenableColumns
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -75,7 +76,7 @@ class MainActivity : ComponentActivity() {
 }
 
 private enum class AppTab(val label: String) { DETAILS("明細"), ANALYSIS("分析"), SETTINGS("設定") }
-private enum class SettingsPage { MENU, CATEGORIES, NOTES, SOURCES, BUDGET, RECURRING, EXPORT, IMPORTED_FILES, IMPORT, RECONCILE, LOCK }
+private enum class SettingsPage { MENU, CATEGORIES, NOTES, SOURCES, BUDGET, RECURRING, EXPORT, BACKUP, IMPORTED_FILES, IMPORT, RECONCILE, LOCK }
 
 @Composable
 private fun CardMemoApp(vm: MainViewModel = viewModel()) {
@@ -111,7 +112,7 @@ private fun CardMemoApp(vm: MainViewModel = viewModel()) {
     ) { padding ->
         Box(Modifier.padding(padding).fillMaxSize()) {
             when (tab) {
-                AppTab.DETAILS -> key(detailsHomeKey) { if (detailsTool == null) DetailsScreen(transactions, paymentSources, selectedSourceId, { selectedSourceId = it }, vm::ensureRecurringFor, vm::toggleConfirmed, { editItem = it }, lockedMonths, { month, source -> detailsTool = month to source }, vm::setMonthLocked) else Column(Modifier.fillMaxSize().padding(16.dp)) { TextButton(onClick = { detailsTool = null }) { Text("‹ 明細に戻る") }; Box(Modifier.weight(1f)) { DataTransferSettings(SettingsPage.RECONCILE, transactions, paymentSources, importedStatements, lockedMonths, vm::isImportedFile, vm::recordImportedFile, vm::saveImportedStatement, vm::addSuggestedTransactions, vm::setReconciliationProgress, vm::confirmTransactions, vm::linkImportedStatement, vm::deleteImportedStatement, detailsTool!!.first, detailsTool!!.second) } } }
+                AppTab.DETAILS -> key(detailsHomeKey) { if (detailsTool == null) DetailsScreen(transactions, paymentSources, selectedSourceId, { selectedSourceId = it }, vm::ensureRecurringFor, vm::toggleConfirmed, { editItem = it }, lockedMonths, reconciliationProgress, { month, source -> detailsTool = month to source }, vm::setMonthLocked) else Column(Modifier.fillMaxSize().padding(16.dp)) { TextButton(onClick = { detailsTool = null }) { Text("‹ 明細に戻る") }; Box(Modifier.weight(1f)) { DataTransferSettings(SettingsPage.RECONCILE, transactions, paymentSources, importedStatements, lockedMonths, vm::isImportedFile, vm::recordImportedFile, vm::saveImportedStatement, vm::addSuggestedTransactions, vm::setReconciliationProgress, vm::confirmTransactions, vm::linkImportedStatement, vm::deleteImportedStatement, detailsTool!!.first, detailsTool!!.second) } } }
                 AppTab.ANALYSIS -> key(analysisHomeKey) { AnalysisScreen(transactions, budget, defaultBudget, vm::ensureRecurringFor) }
                 AppTab.SETTINGS -> key(settingsHomeKey) { SettingsScreen(categories, notesBySource, recurring, budget, defaultBudget, paymentSources, transactions, importedStatements, lockedMonths, reconciliationProgress, vm) }
             }
@@ -153,7 +154,7 @@ private fun CardMemoApp(vm: MainViewModel = viewModel()) {
     }
 }
 
-@Composable private fun DetailsScreen(all: List<Transaction>, sources: List<PaymentSource>, sourceId: String, selectSource: (String) -> Unit, ensure: (YearMonth) -> Unit, toggle: (Long) -> Unit, edit: (Transaction) -> Unit, lockedMonths: Set<String>, openTransfer: (YearMonth, String) -> Unit, setLocked: (YearMonth, Boolean) -> Unit) {
+@Composable private fun DetailsScreen(all: List<Transaction>, sources: List<PaymentSource>, sourceId: String, selectSource: (String) -> Unit, ensure: (YearMonth) -> Unit, toggle: (Long) -> Unit, edit: (Transaction) -> Unit, lockedMonths: Set<String>, reconciliationProgress: Map<String, ReconciliationProgress>, openTransfer: (YearMonth, String) -> Unit, setLocked: (YearMonth, Boolean) -> Unit) {
     var month by remember { mutableStateOf(YearMonth.now()) }
     var onlyOpen by remember { mutableStateOf(false) }
     LaunchedEffect(month) { ensure(month) }
@@ -165,7 +166,7 @@ private fun CardMemoApp(vm: MainViewModel = viewModel()) {
         PaymentSourcePicker(sources, sourceId, selectSource)
         MonthHeader(month, { month = month.minusMonths(1) }, { month = month.plusMonths(1) })
         Card(colors = CardDefaults.cardColors(containerColor = WinterBlue), shape = RoundedCornerShape(22.dp), modifier = Modifier.fillMaxWidth()) { Row(Modifier.fillMaxWidth().padding(18.dp), verticalAlignment = Alignment.CenterVertically) { Column(Modifier.weight(1f)) { Text("この月の利用額", color = Color.White.copy(.78f)); Text(yen(monthRows.sumOf { it.amount }), color = Color.White, fontSize = 32.sp, fontWeight = FontWeight.Bold); Text("${monthRows.size}件 ・ 未確認 ${monthRows.count { !it.confirmed }}件", color = Color.White.copy(.82f)) }; OutlinedButton(onClick = { openTransfer(month, sourceId) }, border = BorderStroke(1.dp, Color.White.copy(.38f)), colors = ButtonDefaults.outlinedButtonColors(containerColor = Color.White.copy(.10f), contentColor = Color.White), contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp)) { Text("明細照合  ›", fontSize = 11.sp, fontWeight = FontWeight.Bold) } } }
-        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) { Switch(onlyOpen, { onlyOpen = it }); Spacer(Modifier.width(8.dp)); Text("未確認のみ"); Spacer(Modifier.weight(1f)); val isLocked = month.toString() in lockedMonths; TextButton(onClick = { if (isLocked) setLocked(month, false) else if (all.forMonth(month).isNotEmpty() && all.forMonth(month).all { it.confirmed }) setLocked(month, true) else lockFailed = true }, contentPadding = PaddingValues(horizontal = 6.dp)) { Text(if (isLocked) "🔒 確定済み" else "月を確定", color = Color.Gray, fontSize = 11.sp) } }
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) { Switch(onlyOpen, { onlyOpen = it }); Spacer(Modifier.width(8.dp)); Text("未確認のみ"); Spacer(Modifier.weight(1f)); val isLocked = month.toString() in lockedMonths; val monthProgress = reconciliationProgress.filterKeys { it.startsWith("${month}|") }.values; TextButton(onClick = { if (isLocked) setLocked(month, false) else if (ReconciliationPolicy.canLock(monthProgress)) setLocked(month, true) else lockFailed = true }, contentPadding = PaddingValues(horizontal = 6.dp)) { Text(if (isLocked) "🔒 確定済み" else "月を確定", color = Color.Gray, fontSize = 11.sp) } }
         Text("${rows.size}件  ${yen(rows.sumOf { it.amount })}", color = DeepNavy, fontWeight = FontWeight.Bold)
         if (rows.isEmpty()) EmptyMessage("該当する明細はありません") else LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
             items(rows, key = { it.id }) { item ->
@@ -237,13 +238,13 @@ private fun CardMemoApp(vm: MainViewModel = viewModel()) {
     }
 }
 
-@Composable private fun SettingsScreen(categories: List<String>, notesBySource: Map<String, List<String>>, recurring: List<RecurringExpense>, budgets: Map<String, Int>, defaultBudget: Int, sources: List<PaymentSource>, transactions: List<Transaction>, importedStatements: List<ImportedStatement>, lockedMonths: Set<String>, reconciliationProgress: Map<String, Pair<Int, Int>>, vm: MainViewModel) {
+@Composable private fun SettingsScreen(categories: List<String>, notesBySource: Map<String, List<String>>, recurring: List<RecurringExpense>, budgets: Map<String, Int>, defaultBudget: Int, sources: List<PaymentSource>, transactions: List<Transaction>, importedStatements: List<ImportedStatement>, lockedMonths: Set<String>, reconciliationProgress: Map<String, ReconciliationProgress>, vm: MainViewModel) {
     var page by remember { mutableStateOf(SettingsPage.MENU) }
     val budget = budgets[YearMonth.now().toString()] ?: defaultBudget
     Column(Modifier.fillMaxSize().padding(16.dp)) {
         if (page != SettingsPage.MENU) TextButton(onClick = { page = SettingsPage.MENU }) { Text("‹ 設定に戻る") }
         when (page) {
-            SettingsPage.MENU -> { Text("設定", fontSize = 25.sp, fontWeight = FontWeight.Bold, color = DeepNavy); Spacer(Modifier.height(12.dp)); SettingsMenuItem("月間予算", if (budget > 0) "現在 ${yen(budget)}" else "毎月の支出目標を登録") { page = SettingsPage.BUDGET }; SettingsMenuItem("固定費プラン", "サブスクや定期支払いを管理") { page = SettingsPage.RECURRING }; SettingsMenuItem("支払方法", "カードなどの支払先を管理") { page = SettingsPage.SOURCES }; SettingsMenuItem("支出カテゴリ", "外食・食料品などの分類を管理") { page = SettingsPage.CATEGORIES }; SettingsMenuItem("備考テンプレート", "入力時に使う定型文を管理") { page = SettingsPage.NOTES }; SettingsMenuItem("取込ファイル管理", "保存済みのカード明細ファイルを確認") { page = SettingsPage.IMPORTED_FILES }; SettingsMenuItem("データエクスポート", "月ごとの明細をCSVで保存") { page = SettingsPage.EXPORT } }
+            SettingsPage.MENU -> { Text("設定", fontSize = 25.sp, fontWeight = FontWeight.Bold, color = DeepNavy); Spacer(Modifier.height(12.dp)); SettingsMenuItem("月間予算", if (budget > 0) "現在 ${yen(budget)}" else "毎月の支出目標を登録") { page = SettingsPage.BUDGET }; SettingsMenuItem("固定費プラン", "サブスクや定期支払いを管理") { page = SettingsPage.RECURRING }; SettingsMenuItem("支払方法", "カードなどの支払先を管理") { page = SettingsPage.SOURCES }; SettingsMenuItem("支出カテゴリ", "外食・食料品などの分類を管理") { page = SettingsPage.CATEGORIES }; SettingsMenuItem("備考テンプレート", "入力時に使う定型文を管理") { page = SettingsPage.NOTES }; SettingsMenuItem("取込ファイル管理", "保存済みのカード明細ファイルを確認") { page = SettingsPage.IMPORTED_FILES }; SettingsMenuItem("バックアップと復元", "すべてのデータを安全に保存・復元") { page = SettingsPage.BACKUP }; SettingsMenuItem("CSVエクスポート", "月ごとの明細をCSVで保存") { page = SettingsPage.EXPORT } }
             SettingsPage.SOURCES -> PaymentSourceSettings(sources, vm::addPaymentSource, vm::deletePaymentSource)
             SettingsPage.CATEGORIES -> StringSettings("支出カテゴリ", "新しいカテゴリ", categories, vm::addCategory, vm::deleteCategory, { vm.moveCategory(it, -1) }, { vm.moveCategory(it, 1) })
             SettingsPage.NOTES -> NoteSettings(sources, notesBySource, vm::addFrequentNote, vm::deleteFrequentNote, { source, value -> vm.moveFrequentNote(source, value, -1) }, { source, value -> vm.moveFrequentNote(source, value, 1) })
@@ -251,9 +252,72 @@ private fun CardMemoApp(vm: MainViewModel = viewModel()) {
             SettingsPage.RECURRING -> RecurringSettings(categories, sources, recurring, vm::saveRecurringExpense, vm::deleteRecurringExpense, vm::duplicateRecurringExpense, vm::endRecurringExpense, vm::reviseRecurringExpense)
             SettingsPage.LOCK -> MonthLockSettings(transactions, lockedMonths, reconciliationProgress, vm::setMonthLocked)
             SettingsPage.EXPORT -> DataTransferSettings(SettingsPage.EXPORT, transactions, sources, importedStatements, lockedMonths, vm::isImportedFile, vm::recordImportedFile, vm::saveImportedStatement, vm::addSuggestedTransactions, vm::setReconciliationProgress, vm::confirmTransactions)
+            SettingsPage.BACKUP -> BackupSettings()
             SettingsPage.IMPORTED_FILES -> ImportedFileManagement(importedStatements, sources, vm::deleteImportedStatement)
             SettingsPage.IMPORT, SettingsPage.RECONCILE -> Unit
         }
+    }
+}
+
+@Composable private fun BackupSettings() {
+    val context = LocalContext.current
+    val manager = remember { BackupManager(context.applicationContext) }
+    var preview by remember { mutableStateOf<ValidatedBackup?>(null) }
+    var status by remember { mutableStateOf("") }
+    var restoring by remember { mutableStateOf(false) }
+    val createLauncher = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/json")) { uri ->
+        uri?.let {
+            runCatching { context.contentResolver.openOutputStream(it)?.use(manager::writeBackup) ?: error("保存先を開けません") }
+                .onSuccess { status = "バックアップを保存しました" }
+                .onFailure { status = "バックアップに失敗しました：${it.localizedMessage.orEmpty()}" }
+        }
+    }
+    val restoreLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        uri?.let {
+            runCatching {
+                val text = context.contentResolver.openInputStream(it)?.bufferedReader(Charsets.UTF_8)?.use { reader -> reader.readText() } ?: error("ファイルを開けません")
+                manager.readAndValidate(text)
+            }.onSuccess { preview = it; status = "検証が完了しました。内容を確認してください。" }
+                .onFailure { preview = null; status = "復元できません：${it.localizedMessage.orEmpty()}" }
+        }
+    }
+    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(14.dp)) {
+        Text("バックアップと復元", fontSize = 22.sp, fontWeight = FontWeight.Bold, color = DeepNavy)
+        Card(colors = CardDefaults.cardColors(containerColor = Color.White)) { Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text("バックアップを作成", fontWeight = FontWeight.Bold, color = DeepNavy)
+            Text("明細、予算、固定費、設定、取込ファイル情報を1つのファイルに保存します。", color = Color.Gray, fontSize = 13.sp)
+            Button(onClick = { createLauncher.launch("RecoFi_backup_${LocalDate.now()}.json") }, modifier = Modifier.fillMaxWidth()) { Text("保存先を選ぶ") }
+        } }
+        Card(colors = CardDefaults.cardColors(containerColor = Color.White)) { Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text("バックアップから復元", fontWeight = FontWeight.Bold, color = DeepNavy)
+            Text("ファイルを完全に検証した後、確認画面を表示します。復元直前には現在データを端末内へ自動保存します。", color = Color.Gray, fontSize = 13.sp)
+            OutlinedButton(enabled = !restoring, onClick = { restoreLauncher.launch(arrayOf("application/json", "text/json", "text/*")) }, modifier = Modifier.fillMaxWidth()) { Text("復元ファイルを選ぶ") }
+        } }
+        if (status.isNotBlank()) Text(status, color = DeepNavy, fontWeight = FontWeight.SemiBold)
+    }
+    preview?.let { backup ->
+        AlertDialog(
+            onDismissRequest = { if (!restoring) preview = null },
+            title = { Text("復元内容を確認") },
+            text = { Column(verticalArrangement = Arrangement.spacedBy(7.dp)) {
+                Text("バックアップ作成日時：${backup.createdAt}")
+                Text("アプリバージョン：${backup.appVersion}")
+                HorizontalDivider()
+                Text("明細：${backup.counts.transactions}件")
+                Text("固定費：${backup.counts.recurringExpenses}件")
+                Text("取込明細ファイル：${backup.counts.importedStatements}件")
+                Text("支払方法：${backup.counts.paymentSources}件")
+                Text("カテゴリ：${backup.counts.categories}件")
+                Text("現在のデータは、この内容に置き換わります。", color = Color(0xFFC43E55), fontWeight = FontWeight.Bold)
+            } },
+            confirmButton = { Button(enabled = !restoring, onClick = {
+                restoring = true
+                runCatching { manager.restore(backup) }
+                    .onSuccess { status = "復元が完了しました。画面を再読み込みします。"; preview = null; (context as? Activity)?.recreate() }
+                    .onFailure { status = "復元を中止しました：${it.localizedMessage.orEmpty()}"; restoring = false; preview = null }
+            }) { Text(if (restoring) "復元中…" else "置き換えて復元") } },
+            dismissButton = { TextButton(enabled = !restoring, onClick = { preview = null }) { Text("キャンセル") } },
+        )
     }
 }
 
@@ -276,7 +340,7 @@ private fun CardMemoApp(vm: MainViewModel = viewModel()) {
     }
 }
 
-@Composable private fun DataTransferSettings(mode: SettingsPage, transactions: List<Transaction>, sources: List<PaymentSource>, importedStatements: List<ImportedStatement>, lockedMonths: Set<String>, isImportedFile: (String) -> Boolean, recordImportedFile: (String) -> Unit, saveImported: (ImportedStatement) -> Unit, addSuggestions: (List<CardStatementEntry>, String, YearMonth) -> Unit, setProgress: (YearMonth, String, Int, Int) -> Unit, confirmMatches: (Set<Long>, YearMonth) -> Unit, linkImported: (String, YearMonth, String) -> Boolean = { _, _, _ -> false }, deleteImported: (String) -> Unit = {}, fixedMonth: YearMonth? = null, fixedSourceId: String? = null) {
+@Composable private fun DataTransferSettings(mode: SettingsPage, transactions: List<Transaction>, sources: List<PaymentSource>, importedStatements: List<ImportedStatement>, lockedMonths: Set<String>, isImportedFile: (String) -> Boolean, recordImportedFile: (String) -> Unit, saveImported: (ImportedStatement) -> Unit, addSuggestions: (List<CardStatementEntry>, String, YearMonth) -> Unit, setProgress: (YearMonth, String, Int, Int, Int, Int) -> Unit, confirmMatches: (Set<Long>, YearMonth) -> Unit, linkImported: (String, YearMonth, String) -> Boolean = { _, _, _ -> false }, deleteImported: (String) -> Unit = {}, fixedMonth: YearMonth? = null, fixedSourceId: String? = null) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     var month by remember(fixedMonth) { mutableStateOf(fixedMonth ?: YearMonth.now()) }
@@ -316,7 +380,7 @@ private fun CardMemoApp(vm: MainViewModel = viewModel()) {
                                     val targetMonth = fixedMonth ?: inferredMonth
                                     val occupied = targetSource.isNotBlank() && importedStatements.any { it.statementMonth == targetMonth.toString() && it.paymentSourceId == targetSource }
                                     if (occupied) status = "この月・カードにはすでにファイルが紐づいています。先に現在のファイルを削除してください"
-                                    else { saveImported(ImportedStatement(if (targetSource.isBlank()) inferredMonth.toString() else targetMonth.toString(), targetSource, fileName, hash, entries)); if (targetSource.isNotBlank()) setProgress(targetMonth, targetSource, entries.size, 0); recordImportedFile(hash); recordImportedFile(statementHash); status = if (targetSource.isBlank()) "${fileName} をファイル一覧へ保存しました" else "${fileName} をこの月・カードへ紐づけました" }
+                                    else { saveImported(ImportedStatement(if (targetSource.isBlank()) inferredMonth.toString() else targetMonth.toString(), targetSource, fileName, hash, entries)); if (targetSource.isNotBlank()) setProgress(targetMonth, targetSource, entries.size, 0, 0, 0); recordImportedFile(hash); recordImportedFile(statementHash); status = if (targetSource.isBlank()) "${fileName} をファイル一覧へ保存しました" else "${fileName} をこの月・カードへ紐づけました" }
                                 }
                             }
                         }
@@ -359,7 +423,7 @@ private fun CardMemoApp(vm: MainViewModel = viewModel()) {
             if (imported != null) { Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) { Column(Modifier.weight(1f)) { Text(imported.fileName, fontWeight = FontWeight.SemiBold, color = DeepNavy); Text("${imported.entries.size}件・この月に紐づけ済み", color = Color.Gray, fontSize = 12.sp) }; TextButton(onClick = { deleteImported(imported.fileHash) }) { Text("削除", color = Color(0xFFC43E55)) } } }
             else { Text("この月に紐づいたファイルはありません", color = Color.Gray, fontSize = 13.sp); importedStatements.filter { it.paymentSourceId.isBlank() }.sortedByDescending { it.statementMonth == month.toString() }.take(5).forEach { stored -> OutlinedButton(onClick = { if (linkImported(stored.fileHash, month, sourceId)) status = "${stored.fileName} をこの月・カードへ紐づけました" else status = "この月にはすでに別のファイルが紐づいています" }, modifier = Modifier.fillMaxWidth()) { Column(Modifier.fillMaxWidth()) { Text(stored.fileName, maxLines = 1, overflow = TextOverflow.Ellipsis); Text("推定 ${stored.statementMonth}・${stored.entries.size}件", fontSize = 10.sp, color = Color.Gray) } } } }
             Button(enabled = imported != null && !isLocked, onClick = {
-                imported?.let { statement -> val result = StatementTools.match(statement.entries, transactions, sourceId); matches = result; val missing = result.filter { it.transactionId == null }.map { it.statement }; addSuggestions(missing, sourceId, month); setProgress(month, sourceId, statement.entries.size, statement.entries.size); status = "${result.count { it.transactionId != null }}件を照合し、${missing.size}件を推測明細として追加しました" }
+                imported?.let { statement -> val result = StatementTools.match(statement.entries, transactions, sourceId); matches = result; val matchedCount = result.count { it.transactionId != null }; val missing = result.filter { it.transactionId == null }.map { it.statement }; addSuggestions(missing, sourceId, month); setProgress(month, sourceId, statement.entries.size, matchedCount, missing.size, 0); status = "${matchedCount}件を照合候補にし、${missing.size}件を推測明細として追加しました" }
             }, modifier = Modifier.fillMaxWidth()) { Text("自動消込を実行") }
             if (isLocked) Text("この月はロック済みです", color = Color(0xFFE14964), fontSize = 13.sp)
         } }
@@ -377,24 +441,25 @@ private fun CardMemoApp(vm: MainViewModel = viewModel()) {
     duplicateName?.let { name -> AlertDialog(onDismissRequest = { duplicateName = null }, title = { Text("同じファイルは取込済みです") }, text = { Text("「$name」は以前に読み込まれています。重複した消込を防ぐため、今回は処理しませんでした。") }, confirmButton = { Button(onClick = { duplicateName = null }) { Text("確認") } }) }
 }
 
-@Composable private fun MonthLockSettings(transactions: List<Transaction>, lockedMonths: Set<String>, progress: Map<String, Pair<Int, Int>>, setLocked: (YearMonth, Boolean) -> Unit) {
+@Composable private fun MonthLockSettings(transactions: List<Transaction>, lockedMonths: Set<String>, progress: Map<String, ReconciliationProgress>, setLocked: (YearMonth, Boolean) -> Unit) {
     var month by remember { mutableStateOf(YearMonth.now()) }
     var warning by remember { mutableStateOf<String?>(null) }
     var confirmLock by remember { mutableStateOf(false) }
     val isLocked = month.toString() in lockedMonths
     val monthProgress = progress.filterKeys { it.startsWith("${month}|") }.values
-    val imported = monthProgress.sumOf { it.first }
-    val matched = monthProgress.sumOf { it.second }
-    val confirmed = transactions.count { it.reconciledMonth == month.toString() && it.confirmed }
+    val imported = monthProgress.sumOf { it.imported }
+    val matched = monthProgress.sumOf { it.matched }
+    val suggested = monthProgress.sumOf { it.suggested }
+    val confirmed = monthProgress.sumOf { it.confirmed }
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(14.dp)) {
         Text("月次ロック", fontSize = 22.sp, fontWeight = FontWeight.Bold, color = DeepNavy)
         Text("消込が完了した月を確定し、自動・手動の変更から守ります。", color = Color.Gray)
         Card(colors = CardDefaults.cardColors(containerColor = Color.White)) { Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) { OutlinedButton(onClick = { month = month.minusMonths(1) }) { Text("‹") }; Text("${month.year}年 ${month.monthValue}月", fontWeight = FontWeight.Bold, color = DeepNavy); OutlinedButton(onClick = { month = month.plusMonths(1) }) { Text("›") } }
-            if (imported > 0) Text("取込 $imported 件 ・ 候補 $matched 件 ・ 消込済み $confirmed 件", color = Color(0xFF53658F)) else Text("この月はまだカード明細を取り込んでいません", color = Color.Gray)
+            if (imported > 0) Text("取込 $imported 件 ・ 一致 $matched 件 ・ 推測 $suggested 件 ・ 確定 $confirmed 件", color = Color(0xFF53658F)) else Text("この月はまだカード明細を取り込んでいません", color = Color.Gray)
             if (isLocked) { Text("🔒 ロック中", fontWeight = FontWeight.Bold, color = DeepNavy); OutlinedButton(onClick = { setLocked(month, false) }, modifier = Modifier.fillMaxWidth()) { Text("ロックを解除") } }
             else Button(onClick = {
-                warning = when { imported == 0 -> "明細画面の自動消込から、先にカード明細を読み込んでね。"; matched < imported -> "まだ ${imported - matched} 件、登録明細との組み合わせが見つかっていないよ。"; confirmed < matched -> "あと ${matched - confirmed} 件の消込が残っているよ。"; else -> null }
+                warning = when { imported == 0 -> "明細画面の自動消込から、先にカード明細を読み込んでね。"; confirmed < imported -> "あと ${imported - confirmed} 件の確認が残っているよ。"; else -> null }
                 if (warning == null) confirmLock = true
             }, modifier = Modifier.fillMaxWidth()) { Text("この月を確定してロック") }
         } }
