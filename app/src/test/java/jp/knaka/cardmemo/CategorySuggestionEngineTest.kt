@@ -24,6 +24,11 @@ class CategorySuggestionEngineTest {
         assertEquals("交際費", CategorySuggestionEngine.suggest("カフェ", "rakuten", history, listOf("外食", "交際費")).first())
     }
 
+    @Test fun suggestionsAreLimitedToThree() {
+        val history = listOf("A", "B", "C", "D").map { category -> transaction("共通店舗", category) }
+        assertEquals(3, CategorySuggestionEngine.suggest("共通店舗", "rakuten", history, listOf("A", "B", "C", "D")).size)
+    }
+
     private fun transaction(note: String, category: String, sourceId: String = "rakuten") =
         Transaction(System.nanoTime(), 500, category, note, 0L, paymentSourceId = sourceId)
 }

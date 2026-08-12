@@ -87,4 +87,18 @@ class BackupCodecTest {
         stored.put("value", progress.toString())
         assertThrows(IllegalArgumentException::class.java) { BackupCodec.decodeAndValidate(root.toString()) }
     }
+
+    @Test fun encodingIsDeterministicForSameTimestampAndData() {
+        val first = BackupCodec.encode(preferences, "1.0", "2026-08-12T00:00:00Z")
+        val second = BackupCodec.encode(preferences.toList().reversed().toMap(), "1.0", "2026-08-12T00:00:00Z")
+        assertEquals(first, second)
+    }
+
+    @Test fun reconciliationCountsCannotExceedImportedCount() {
+        val progress = JSONObject().put("2026-07|rakuten", JSONObject().apply {
+            put("imported", 1); put("matched", 2); put("suggested", 0); put("confirmed", 0)
+        })
+        val invalid = preferences + ("reconciliation_progress" to progress.toString())
+        assertThrows(IllegalArgumentException::class.java) { BackupCodec.encode(invalid, "1.0") }
+    }
 }

@@ -53,46 +53,15 @@ object StatementTools {
     }
 
     fun statementFingerprint(entries: List<CardStatementEntry>): String {
-        val canonical = entries.sortedWith(compareBy<CardStatementEntry> { it.date }.thenBy { it.amount }.thenBy { ReconciliationMatcher.normalizeMerchant(it.merchant) })
-            .joinToString("\n") { "${it.date}|${it.amount}|${ReconciliationMatcher.normalizeMerchant(it.merchant)}" }
-        val digest = MessageDigest.getInstance("SHA-256").digest(canonical.toByteArray(StandardCharsets.UTF_8))
-        return "statement:" + digest.joinToString("") { "%02x".format(it) }
+        return StatementFingerprint.calculate(entries)
     }
 
     private fun readCsv(context: Context, uri: Uri, targetMonth: YearMonth): List<CardStatementEntry> {
         val bytes = context.contentResolver.openInputStream(uri)?.use { it.readBytes() } ?: return emptyList()
         val utf8 = runCatching { StandardCharsets.UTF_8.newDecoder().onMalformedInput(CodingErrorAction.REPORT).decode(ByteBuffer.wrap(bytes)).toString().removePrefix("\uFEFF") }.getOrNull()
         val text = utf8 ?: bytes.toString(Charset.forName("MS932"))
-        val rows = parseCsv(text)
-        if (rows.isEmpty()) return emptyList()
-        val headerIndex = rows.indexOfFirst { row -> row.any { normalizeHeader(it) in DATE_HEADERS } && row.any { normalizeHeader(it) in AMOUNT_HEADERS } }.takeIf { it >= 0 } ?: 0
-        val headers = rows[headerIndex].map(::normalizeHeader)
-        val dateIndex = headers.indexOfFirst { it in DATE_HEADERS }
-        val amountIndex = headers.indexOfFirst { it in AMOUNT_HEADERS }
-        val merchantIndex = headers.indexOfFirst { it in MERCHANT_HEADERS }
-        if (dateIndex < 0 || amountIndex < 0) return emptyList()
-        return rows.drop(headerIndex + 1).mapNotNull { row ->
-            val dateText = row.getOrNull(dateIndex).orEmpty().trim()
-            val parts = Regex("(?:(20\\d{2})[./-])?(\\d{1,2})[./-](\\d{1,2})").find(dateText) ?: return@mapNotNull null
-            val date = runCatching { LocalDate.of(parts.groupValues[1].toIntOrNull() ?: targetMonth.year, parts.groupValues[2].toInt(), parts.groupValues[3].toInt()) }.getOrNull() ?: return@mapNotNull null
-            val amount = row.getOrNull(amountIndex).orEmpty().replace(Regex("[^0-9-]"), "").toIntOrNull()?.let { kotlin.math.abs(it) } ?: return@mapNotNull null
-            val merchant = row.getOrNull(merchantIndex).orEmpty().trim().ifBlank { "利用先不明" }
-            if (amount == 0) null else CardStatementEntry(date, amount, merchant, row.joinToString(" "))
-        }.distinctBy { Triple(it.date, it.amount, normalize(it.merchant)) }
+        return StatementCsvParser.parse(text, targetMonth)
     }
-
-    private fun parseCsv(text: String): List<List<String>> {
-        val rows = mutableListOf<List<String>>(); var row = mutableListOf<String>(); val cell = StringBuilder(); var quoted = false; var i = 0
-        while (i < text.length) {
-            val c = text[i]
-            when { c == '"' && quoted && i + 1 < text.length && text[i + 1] == '"' -> { cell.append('"'); i++ }; c == '"' -> quoted = !quoted; c == ',' && !quoted -> { row += cell.toString(); cell.clear() }; (c == '\n' || c == '\r') && !quoted -> { if (c == '\r' && i + 1 < text.length && text[i + 1] == '\n') i++; row += cell.toString(); cell.clear(); if (row.any { it.isNotBlank() }) rows += row; row = mutableListOf() }; else -> cell.append(c) }
-            i++
-        }
-        row += cell.toString(); if (row.any { it.isNotBlank() }) rows += row
-        return rows
-    }
-
-    private fun normalizeHeader(value: String) = value.replace(Regex("[\\s　・]"), "").trim()
     suspend fun readRakutenPdf(context: Context, uri: Uri, targetMonth: YearMonth): List<CardStatementEntry> {
         val descriptor = context.contentResolver.openFileDescriptor(uri, "r") ?: return emptyList()
         val recognizer = TextRecognition.getClient(JapaneseTextRecognizerOptions.Builder().build())
@@ -172,9 +141,6 @@ object StatementTools {
     private fun csvCell(value: String): String = if (value.any { it == ',' || it == '"' || it == '\n' || it == '\r' })
         "\"${value.replace("\"", "\"\"")}\"" else value
     private fun normalize(value: String) = value.lowercase().filter { it.isLetterOrDigit() }
-    private val DATE_HEADERS = setOf("利用日", "ご利用日", "利用年月日", "ご利用年月日", "売上日", "日付")
-    private val AMOUNT_HEADERS = setOf("利用金額", "ご利用金額", "ご利用額", "今回ご利用金額", "金額", "支払金額")
-    private val MERCHANT_HEADERS = setOf("利用店名", "ご利用店名", "利用箇所", "ご利用箇所", "利用店名及び商品名", "ご利用店名及び商品名", "ご利用先", "加盟店名", "利用先")
     private suspend fun <T> Task<T>.awaitResult(): T = suspendCancellableCoroutine { continuation ->
         addOnSuccessListener { if (continuation.isActive) continuation.resume(it) }
         addOnFailureListener { if (continuation.isActive) continuation.resumeWithException(it) }

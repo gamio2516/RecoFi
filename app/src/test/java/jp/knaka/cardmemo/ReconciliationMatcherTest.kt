@@ -16,6 +16,9 @@ class ReconciliationMatcherTest {
     @Test fun eightDayDifferenceDoesNotMatch() = assertNull(match(entry(), tx(date = base.plusDays(8))).transactionId)
     @Test fun differentAmountDoesNotMatch() = assertNull(match(entry(), tx(amount = 501)).transactionId)
 
+    @Test fun differentPaymentSourceDoesNotMatch() =
+        assertNull(ReconciliationMatcher.match(listOf(entry()), listOf(tx().copy(paymentSourceId = "other")), "card", zone).single().transactionId)
+
     @Test fun closerDateAndMerchantWinsAmongSameAmountTransactions() {
         val result = match(entry(merchant = "STARBUCKS"), tx(id = 1, date = base.plusDays(4), note = "別店舗"), tx(id = 2, date = base.plusDays(1), note = "Starbucks Coffee"))
         assertEquals(2L, result.transactionId)
