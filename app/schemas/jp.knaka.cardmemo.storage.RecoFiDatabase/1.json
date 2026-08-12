@@ -2,7 +2,7 @@
   "formatVersion": 1,
   "database": {
     "version": 1,
-    "identityHash": "6618876ccb96a6d0aa49436f0d155d8c",
+    "identityHash": "00709290e46e7335038baa0d2678ec0b",
     "entities": [
       {
         "tableName": "payment_sources",
@@ -313,7 +313,7 @@
       },
       {
         "tableName": "transactions",
-        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER NOT NULL, `amount` INTEGER NOT NULL, `category` TEXT NOT NULL, `note` TEXT NOT NULL, `usedAt` INTEGER NOT NULL, `confirmed` INTEGER NOT NULL, `recurringId` INTEGER, `paymentSourceId` TEXT NOT NULL, `reconciledMonth` TEXT, `suggested` INTEGER NOT NULL, PRIMARY KEY(`id`), FOREIGN KEY(`category`) REFERENCES `categories`(`name`) ON UPDATE NO ACTION ON DELETE RESTRICT , FOREIGN KEY(`paymentSourceId`) REFERENCES `payment_sources`(`id`) ON UPDATE NO ACTION ON DELETE RESTRICT , FOREIGN KEY(`recurringId`) REFERENCES `recurring_expenses`(`id`) ON UPDATE NO ACTION ON DELETE RESTRICT )",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER NOT NULL, `amount` INTEGER NOT NULL, `category` TEXT NOT NULL, `note` TEXT NOT NULL, `usedAt` INTEGER NOT NULL, `confirmed` INTEGER NOT NULL, `recurringId` INTEGER, `paymentSourceId` TEXT NOT NULL, `reconciledMonth` TEXT, `suggested` INTEGER NOT NULL, PRIMARY KEY(`id`), FOREIGN KEY(`category`) REFERENCES `categories`(`name`) ON UPDATE NO ACTION ON DELETE RESTRICT , FOREIGN KEY(`paymentSourceId`) REFERENCES `payment_sources`(`id`) ON UPDATE NO ACTION ON DELETE RESTRICT , FOREIGN KEY(`recurringId`) REFERENCES `recurring_expenses`(`id`) ON UPDATE NO ACTION ON DELETE SET NULL )",
         "fields": [
           {
             "fieldPath": "id",
@@ -443,7 +443,7 @@
           },
           {
             "table": "recurring_expenses",
-            "onDelete": "RESTRICT",
+            "onDelete": "SET NULL",
             "onUpdate": "NO ACTION",
             "columns": [
               "recurringId"
@@ -819,7 +819,7 @@
     ],
     "setupQueries": [
       "CREATE TABLE IF NOT EXISTS room_master_table (id INTEGER PRIMARY KEY,identity_hash TEXT)",
-      "INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, '6618876ccb96a6d0aa49436f0d155d8c')"
+      "INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, '00709290e46e7335038baa0d2678ec0b')"
     ]
   }
 }

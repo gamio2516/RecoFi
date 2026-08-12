@@ -53,7 +53,7 @@ data class RecurringPriceRevisionEntity(val recurringId: Long, val effectiveDate
     foreignKeys = [
         ForeignKey(entity = CategoryEntity::class, parentColumns = ["name"], childColumns = ["category"], onDelete = ForeignKey.RESTRICT),
         ForeignKey(entity = PaymentSourceEntity::class, parentColumns = ["id"], childColumns = ["paymentSourceId"], onDelete = ForeignKey.RESTRICT),
-        ForeignKey(entity = RecurringExpenseEntity::class, parentColumns = ["id"], childColumns = ["recurringId"], onDelete = ForeignKey.RESTRICT),
+        ForeignKey(entity = RecurringExpenseEntity::class, parentColumns = ["id"], childColumns = ["recurringId"], onDelete = ForeignKey.SET_NULL),
     ],
     indices = [Index("category"), Index("paymentSourceId"), Index("recurringId"), Index("usedAt")],
 )

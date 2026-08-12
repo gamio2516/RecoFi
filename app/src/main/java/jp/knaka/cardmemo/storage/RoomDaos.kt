@@ -20,6 +20,8 @@ import androidx.room.Upsert
     @Query("DELETE FROM note_templates") fun deleteNotes()
     @Query("DELETE FROM categories") fun deleteCategories()
     @Query("DELETE FROM payment_sources") fun deletePaymentSources()
+    @Query("DELETE FROM categories WHERE name = :name") fun deleteCategory(name: String)
+    @Query("DELETE FROM payment_sources WHERE id = :id") fun deletePaymentSource(id: String)
 }
 
 @Dao interface RecurringExpenseDao {
@@ -29,6 +31,7 @@ import androidx.room.Upsert
     @Upsert fun upsertRevisions(items: List<RecurringPriceRevisionEntity>)
     @Query("DELETE FROM recurring_price_revisions") fun deleteRevisions()
     @Query("DELETE FROM recurring_expenses") fun deleteAll()
+    @Query("DELETE FROM recurring_expenses WHERE id = :id") fun delete(id: Long)
 }
 
 @Dao interface StatementDao {

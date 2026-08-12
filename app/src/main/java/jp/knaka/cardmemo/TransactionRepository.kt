@@ -3,11 +3,17 @@ package jp.knaka.cardmemo
 import android.content.Context
 import org.json.JSONArray
 import org.json.JSONObject
+import jp.knaka.cardmemo.storage.StorageBootstrapResult
+import jp.knaka.cardmemo.storage.StorageProvider
+import jp.knaka.cardmemo.storage.TransactionEntity
 
 class TransactionRepository(context: Context) {
     private val preferences = context.getSharedPreferences("card_memo", Context.MODE_PRIVATE)
+    private val room = (StorageProvider.get(context) as? StorageBootstrapResult.RoomReady)?.database
 
-    fun load(): List<Transaction> = runCatching {
+    fun load(): List<Transaction> = room?.transactions()?.loadAll()?.map { item ->
+        Transaction(item.id, item.amount.toIntExact(), item.category, item.note, item.usedAt, item.confirmed, item.recurringId, item.paymentSourceId, item.reconciledMonth, item.suggested)
+    } ?: runCatching {
         val array = JSONArray(preferences.getString(KEY, "[]"))
         buildList {
             for (index in 0 until array.length()) {
@@ -31,6 +37,10 @@ class TransactionRepository(context: Context) {
     }.getOrDefault(emptyList())
 
     fun save(items: List<Transaction>) {
+        room?.let { database -> database.runInTransaction {
+            database.transactions().deleteAll()
+            database.transactions().upsertAll(items.map { TransactionEntity(it.id, it.amount.toLong(), it.category, it.note, it.usedAt, it.confirmed, it.recurringId, it.paymentSourceId, it.reconciledMonth, it.suggested) })
+        }; return }
         val array = JSONArray()
         items.forEach { transaction ->
             array.put(JSONObject().apply {
@@ -50,4 +60,9 @@ class TransactionRepository(context: Context) {
     }
 
     private companion object { const val KEY = "transactions" }
+}
+
+private fun Long.toIntExact(): Int {
+    require(this in Int.MIN_VALUE.toLong()..Int.MAX_VALUE.toLong()) { "金額が現行UIの範囲を超えています" }
+    return toInt()
 }

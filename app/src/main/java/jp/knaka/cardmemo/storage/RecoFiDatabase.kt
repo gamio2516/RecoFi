@@ -27,6 +27,7 @@ abstract class RecoFiDatabase : RoomDatabase() {
     companion object {
         const val DATABASE_NAME = "recofi.db"
         fun open(context: Context): RecoFiDatabase = Room.databaseBuilder(context, RecoFiDatabase::class.java, DATABASE_NAME)
+            .allowMainThreadQueries()
             .build()
     }
 }
