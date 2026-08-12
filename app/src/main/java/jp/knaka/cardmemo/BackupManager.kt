@@ -6,25 +6,48 @@ import java.io.File
 import java.io.FileOutputStream
 import java.io.OutputStream
 import java.time.Instant
+import jp.knaka.cardmemo.storage.LegacyMigrationParser
+import jp.knaka.cardmemo.storage.LegacyParseResult
+import jp.knaka.cardmemo.storage.LegacySnapshot
+import jp.knaka.cardmemo.storage.RoomBackupAdapter
+import jp.knaka.cardmemo.storage.StorageBootstrapResult
+import jp.knaka.cardmemo.storage.StorageProvider
+import kotlinx.coroutines.runBlocking
 
 class BackupManager(private val context: Context) {
     private val preferences = context.getSharedPreferences(PREFERENCES_NAME, Context.MODE_PRIVATE)
     private val appVersion: String get() = context.packageManager.getPackageInfo(context.packageName, 0).versionName ?: "unknown"
 
     fun writeBackup(output: OutputStream) {
-        val content = BackupCodec.encode(preferences.all, appVersion)
+        val current = currentPreferences()
+        val content = BackupCodec.encode(current, appVersion)
         output.bufferedWriter(Charsets.UTF_8).use { it.write(content) }
     }
 
     fun readAndValidate(text: String): ValidatedBackup = BackupCodec.decodeAndValidate(text)
 
     fun restore(backup: ValidatedBackup): File {
-        val current = preferences.all.mapValues { (_, value) -> copyValue(value) }
+        val storage = StorageProvider.get(context)
+        val current = currentPreferences()
         val safetyBackup = writeSafetyBackup(current)
+        if (storage is StorageBootstrapResult.RoomReady) {
+            val parsed = LegacyMigrationParser().parse(LegacySnapshot(backup.preferences))
+            val data = when (parsed) {
+                is LegacyParseResult.Success -> parsed.data
+                is LegacyParseResult.Failure -> throw IllegalArgumentException(parsed.errors.joinToString("\n"))
+            }
+            runBlocking { RoomBackupAdapter.replace(storage.database, data) }
+            return safetyBackup
+        }
         val editor = preferences.edit().clear().also { replacement -> backup.preferences.forEach { (key, value) -> replacement.putValue(key, value) } }
         val replaced = runCatching { editor.commit() }.getOrElse { error -> rollback(safetyBackup); throw IllegalStateException("データの置換に失敗したため、元のデータを維持しました", error) }
         if (!replaced) { rollback(safetyBackup); throw IllegalStateException("データの置換に失敗したため、元のデータを維持しました") }
         return safetyBackup
+    }
+
+    private fun currentPreferences(): Map<String, Any> = when (val storage = StorageProvider.get(context)) {
+        is StorageBootstrapResult.RoomReady -> RoomBackupAdapter.exportPreferences(storage.database)
+        is StorageBootstrapResult.LegacyRecovery -> preferences.all.mapValues { (_, value) -> copyValue(value) }
     }
 
     private fun writeSafetyBackup(current: Map<String, Any>): File {
