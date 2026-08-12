@@ -161,25 +161,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun ensureRecurringFor(month: YearMonth) {
-        var updated = _transactions.value
-        _recurringExpenses.value.filter { month >= YearMonth.parse(it.startMonth) }.forEach { expense ->
-            val date = month.atDay(expense.billingDay.coerceAtMost(month.lengthOfMonth()))
-            if (date.isBefore(LocalDate.parse(expense.contractDate))) return@forEach
-            if (expense.endDate?.let { date.isAfter(LocalDate.parse(it)) } == true) return@forEach
-            val contract = LocalDate.parse(expense.contractDate)
-            var firstMonth = YearMonth.from(contract)
-            if (firstMonth.atDay(expense.billingDay.coerceAtMost(firstMonth.lengthOfMonth())).isBefore(contract)) firstMonth = firstMonth.plusMonths(1)
-            if ((java.time.temporal.ChronoUnit.MONTHS.between(firstMonth, month) % expense.intervalMonths) != 0L) return@forEach
-            val exists = updated.any { transaction -> transaction.recurringId == expense.id && transaction.yearMonth() == month }
-            if (!exists) {
-                updated += Transaction(
-                    id = System.nanoTime(), amount = expense.priceRevisions.filter { !LocalDate.parse(it.effectiveDate).isAfter(date) }.maxByOrNull { it.effectiveDate }?.amount ?: expense.amount, category = expense.category,
-                    note = expense.note, usedAt = date.atStartOfDay(ZoneId.systemDefault()).toInstant().toEpochMilli(),
-                    recurringId = expense.id,
-                    paymentSourceId = expense.paymentSourceId,
-                )
-            }
-        }
+        val generated = RecurringTransactionGenerator.generate(_recurringExpenses.value, _transactions.value, month)
+        val updated = _transactions.value + generated
         if (updated != _transactions.value) updateTransactions(updated)
     }
 
