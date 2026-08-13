@@ -7,11 +7,8 @@ data class Transaction(
     val merchant: String,
     val description: String,
     val usedAt: Long,
-    val confirmed: Boolean = false,
     val recurringId: Long? = null,
     val paymentSourceId: String = "rakuten",
-    val reconciledMonth: String? = null,
-    val suggested: Boolean = false,
 )
 
 data class RecurringExpense(
@@ -31,7 +28,10 @@ data class RecurringExpense(
 
 data class PriceRevision(val effectiveDate: String, val amount: Long)
 
-data class PaymentSource(val id: String, val name: String, val isCard: Boolean)
+enum class PaymentSourceType { CREDIT_CARD, CASH, OTHER }
+data class PaymentSource(val id: String, val name: String, val type: PaymentSourceType) {
+    val isCard: Boolean get() = type == PaymentSourceType.CREDIT_CARD
+}
 
 data class CardStatementEntry(
     val date: java.time.LocalDate,
@@ -41,6 +41,7 @@ data class CardStatementEntry(
 )
 
 data class StatementMatch(
+    val statementEntryId: Long = 0,
     val statement: CardStatementEntry,
     val transactionId: Long?,
     val score: Int,
@@ -54,16 +55,15 @@ data class ImportedStatement(
     val entries: List<CardStatementEntry>,
 )
 
-data class ReconciliationProgress(
-    val imported: Int = 0,
-    val matched: Int = 0,
-    val suggested: Int = 0,
-    val confirmed: Int = 0,
-)
+enum class ReconciliationStatus { PENDING, SUGGESTED, CONFIRMED }
+enum class MatchSource { RULE, USER, AI }
+enum class MatchConfidence { HIGH, MEDIUM }
+data class MonthlyReconciliationProgress(val imported:Int,val confirmed:Int,val needsReview:Int,val unresolved:Int) { val remaining:Int get()=needsReview+unresolved }
+data class ReconciliationProgress(val imported:Int=0,val matched:Int=0,val suggested:Int=0,val confirmed:Int=0)
 
 val DefaultPaymentSources = listOf(
-    PaymentSource("rakuten", "楽天カード", true),
-    PaymentSource("other", "その他の支払い", false),
+    PaymentSource("rakuten", "楽天カード", PaymentSourceType.CREDIT_CARD),
+    PaymentSource("other", "その他の支払い", PaymentSourceType.OTHER),
 )
 
 val DefaultCategories = listOf("食料品", "外食", "日用品", "交通", "医療", "娯楽", "衣服", "その他")

@@ -25,6 +25,7 @@ android {
     compileSdk = 36
 
     defaultConfig {
+        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         applicationId = "jp.knaka.cardmemo"
         minSdk = 26
         targetSdk = 36
@@ -33,6 +34,7 @@ android {
     }
 
     buildFeatures { compose = true }
+    sourceSets.getByName("androidTest").assets.srcDir("$projectDir/schemas")
     testOptions { unitTests.isIncludeAndroidResources = true }
 
     compileOptions {
@@ -65,6 +67,7 @@ dependencies {
     implementation(composeBom)
     androidTestImplementation(composeBom)
     androidTestImplementation("androidx.test.ext:junit:1.3.0")
+    androidTestImplementation("androidx.test:runner:1.7.0")
     androidTestImplementation("androidx.room:room-testing:2.8.4")
 
     implementation("androidx.core:core-ktx:1.17.0")

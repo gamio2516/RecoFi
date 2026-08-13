@@ -1,5 +1,4 @@
 package jp.knaka.cardmemo
-
 import jp.knaka.cardmemo.storage.*
 import org.json.JSONArray
 import org.json.JSONObject
@@ -7,136 +6,30 @@ import java.time.Instant
 import java.time.LocalDate
 import java.time.YearMonth
 
-data class BackupCounts(val transactions: Int, val recurringExpenses: Int, val importedStatements: Int, val paymentSources: Int, val categories: Int)
-data class ValidatedBackup(val createdAt: String, val appVersion: String, val counts: BackupCounts, val snapshot: RoomSnapshot)
-
-object BackupCodec {
-    const val FORMAT_VERSION = 2
-
-    fun encode(db: RecoFiDatabase, appVersion: String, createdAt: String = Instant.now().toString()): String {
-        require(appVersion.isNotBlank()) { "アプリバージョンがありません" }
-        Instant.parse(createdAt)
-        val data = RoomBackupAdapter.exportJson(db)
-        val counts = counts(data)
-        return JSONObject()
-            .put("backupFormatVersion", FORMAT_VERSION)
-            .put("createdAt", createdAt)
-            .put("appVersion", appVersion)
-            .put("counts", counts.toJson())
-            .put("data", data)
-            .toString(2)
-    }
-
-    fun decodeAndValidate(text: String): ValidatedBackup = try {
-        val root = JSONObject(text)
-        require(root.getInt("backupFormatVersion") == FORMAT_VERSION) { "非対応のバックアップ形式です" }
-        val createdAt = root.getString("createdAt").also(Instant::parse)
-        val appVersion = root.getString("appVersion").also { require(it.isNotBlank()) { "アプリバージョンがありません" } }
-        val data = root.getJSONObject("data")
-        val snapshot = parseSnapshot(data)
-        val actual = counts(data)
-        require(actual == root.getJSONObject("counts").toCounts()) { "データ件数が一致しません" }
-        ValidatedBackup(createdAt, appVersion, actual, snapshot)
-    } catch (error: IllegalArgumentException) {
-        throw error
-    } catch (error: Exception) {
-        throw IllegalArgumentException("バックアップファイルが破損しているか、必須項目が不足しています", error)
-    }
-
-    private fun parseSnapshot(data: JSONObject): RoomSnapshot {
-        val sources = data.getJSONArray("paymentSources").objects { item ->
-            PaymentSourceEntity(item.requiredText("id"), item.requiredText("name"), item.getBoolean("isCard"), item.getInt("sortOrder"))
-        }.also { requireUnique(it.map(PaymentSourceEntity::id), "支払方法ID") }
-        val categories = data.getJSONArray("categories").objects { item ->
-            CategoryEntity(item.requiredText("name"), item.getInt("sortOrder"))
-        }.also { requireUnique(it.map(CategoryEntity::name), "カテゴリ") }
-        val merchants = data.getJSONArray("merchantTemplates").objects { item ->
-            MerchantTemplateEntity(item.requiredText("value"), item.getInt("sortOrder"))
-        }.also { requireUnique(it.map(MerchantTemplateEntity::value), "取引先テンプレート") }
-        val descriptions = data.getJSONArray("descriptionTemplates").objects { item ->
-            DescriptionTemplateEntity(item.requiredText("value"), item.getInt("sortOrder"))
-        }.also { requireUnique(it.map(DescriptionTemplateEntity::value), "内容テンプレート") }
-
-        val sourceIds = sources.map(PaymentSourceEntity::id).toSet()
-        val categoryNames = categories.map(CategoryEntity::name).toSet()
-        val recurringEntities = mutableListOf<RecurringExpenseEntity>()
-        val revisions = mutableListOf<RecurringPriceRevisionEntity>()
-        data.getJSONArray("recurringExpenses").forEachObject { item ->
-            val id = item.getLong("id")
-            val category = item.requiredText("category").also { require(it in categoryNames) { "固定費のカテゴリ参照が不正です" } }
-            val sourceId = item.requiredText("paymentSourceId").also { require(it in sourceIds) { "固定費の支払方法参照が不正です" } }
-            val startMonth = item.requiredText("startMonth").also { YearMonth.parse(it) }
-            val contractDate = item.requiredText("contractDate").also { LocalDate.parse(it) }
-            val billingDay = item.getInt("billingDay").also { require(it in 1..31) { "請求日が不正です" } }
-            val interval = item.getInt("intervalMonths").also { require(it > 0) { "支払間隔が不正です" } }
-            val amount = item.getLong("amount").also(::requireNonNegative)
-            val endDate = item.optionalText("endDate")?.also { LocalDate.parse(it) }
-            recurringEntities += RecurringExpenseEntity(id, amount, category, item.getString("merchant"), item.getString("description"), billingDay, startMonth, contractDate, sourceId, interval, endDate)
-            item.getJSONArray("priceRevisions").forEachObject { revision ->
-                val date = revision.requiredText("effectiveDate").also { LocalDate.parse(it) }
-                val revisedAmount = revision.getLong("amount").also(::requireNonNegative)
-                revisions += RecurringPriceRevisionEntity(id, date, revisedAmount)
-            }
-        }
-        requireUnique(recurringEntities.map(RecurringExpenseEntity::id), "固定費ID")
-        requireUnique(revisions.map { it.recurringId to it.effectiveDate }, "料金改定")
-
-        val recurringIds = recurringEntities.map(RecurringExpenseEntity::id).toSet()
-        val transactions = data.getJSONArray("transactions").objects { item ->
-            val category = item.requiredText("category").also { require(it in categoryNames) { "明細のカテゴリ参照が不正です" } }
-            val sourceId = item.requiredText("paymentSourceId").also { require(it in sourceIds) { "明細の支払方法参照が不正です" } }
-            val recurringId = item.optionalLong("recurringId").also { require(it == null || it in recurringIds) { "明細の固定費参照が不正です" } }
-            val reconciledMonth = item.optionalText("reconciledMonth")?.also { YearMonth.parse(it) }
-            TransactionEntity(item.getLong("id"), item.getLong("amount").also(::requireNonNegative), category, item.getString("merchant"), item.getString("description"), item.getLong("usedAt"), item.getBoolean("confirmed"), recurringId, sourceId, reconciledMonth, item.getBoolean("suggested"))
-        }.also { requireUnique(it.map(TransactionEntity::id), "明細ID") }
-
-        val statements = mutableListOf<ImportedStatementEntity>()
-        val entries = mutableListOf<StatementEntryEntity>()
-        data.getJSONArray("importedStatements").forEachObject { item ->
-            val hash = item.requiredText("fileHash")
-            val statementMonth = item.optionalText("statementMonth")?.also { YearMonth.parse(it) }
-            val sourceId = item.optionalText("paymentSourceId").also { require(it == null || it in sourceIds) { "取込ファイルの支払方法参照が不正です" } }
-            statements += ImportedStatementEntity(hash, statementMonth, sourceId, item.requiredText("fileName"))
-            item.getJSONArray("entries").forEachObject { entry ->
-                entries += StatementEntryEntity(fileHash = hash, rowOrder = entry.getInt("rowOrder"), date = entry.requiredText("date").also { LocalDate.parse(it) }, amount = entry.getLong("amount").also(::requireNonNegative), merchant = entry.getString("merchant"), rawText = entry.getString("rawText"))
-            }
-        }
-        requireUnique(statements.map(ImportedStatementEntity::fileHash), "取込ファイルhash")
-        requireUnique(statements.mapNotNull { statement -> statement.statementMonth?.let { month -> statement.paymentSourceId?.let { month to it } } }, "取込先")
-        requireUnique(entries.map { it.fileHash to it.rowOrder }, "取込明細行")
-
-        val fingerprints = data.getJSONArray("fingerprints").strings().also { requireUnique(it, "fingerprint") }.map { ImportedFingerprintEntity(it, 0L) }
-        val progress = data.getJSONArray("progress").objects { item ->
-            val month = item.requiredText("month").also { YearMonth.parse(it) }
-            val sourceId = item.requiredText("sourceId").also { require(it in sourceIds) { "消込状態の支払方法参照が不正です" } }
-            val imported = item.getInt("imported")
-            val matched = item.getInt("matched")
-            val suggested = item.getInt("suggested")
-            val confirmed = item.getInt("confirmed")
-            require(imported >= 0 && matched >= 0 && suggested >= 0 && confirmed >= 0 && matched + suggested <= imported && confirmed <= imported) { "消込件数が不正です" }
-            ReconciliationProgressEntity(month, sourceId, imported, matched, suggested, confirmed)
-        }.also { requireUnique(it.map { row -> row.statementMonth to row.paymentSourceId }, "消込状態") }
-        val locks = data.getJSONArray("locks").strings().onEach { YearMonth.parse(it) }.also { requireUnique(it, "月次ロック") }.map { MonthlyLockEntity(it, 0L) }
-
-        val budgetsObject = data.getJSONObject("budgets")
-        val budgets = budgetsObject.keys().asSequence().map { month ->
-            YearMonth.parse(month)
-            MonthlyBudgetEntity(month, budgetsObject.getLong(month).also(::requireNonNegative))
-        }.toList()
-        val defaultBudget = data.getLong("defaultMonthlyBudget").also(::requireNonNegative)
-        return RoomSnapshot(transactions, sources, categories, merchants, descriptions, recurringEntities, revisions, statements, entries, fingerprints, progress, locks, budgets, AppBudgetSettingsEntity(defaultMonthlyBudget = defaultBudget))
-    }
-
-    private fun counts(data: JSONObject) = BackupCounts(data.getJSONArray("transactions").length(), data.getJSONArray("recurringExpenses").length(), data.getJSONArray("importedStatements").length(), data.getJSONArray("paymentSources").length(), data.getJSONArray("categories").length())
-    private fun BackupCounts.toJson() = JSONObject().put("transactions", transactions).put("recurringExpenses", recurringExpenses).put("importedStatements", importedStatements).put("paymentSources", paymentSources).put("categories", categories)
-    private fun JSONObject.toCounts() = BackupCounts(getInt("transactions"), getInt("recurringExpenses"), getInt("importedStatements"), getInt("paymentSources"), getInt("categories"))
-    private fun JSONObject.requiredText(name: String) = getString(name).also { require(it.isNotBlank()) { "$name が空です" } }
-    private fun JSONObject.optionalText(name: String): String? = if (!has(name) || isNull(name)) null else getString(name).ifBlank { null }
-    private fun JSONObject.optionalLong(name: String): Long? = if (!has(name) || isNull(name)) null else getLong(name)
-    private inline fun <T> JSONArray.objects(read: (JSONObject) -> T): List<T> = List(length()) { read(getJSONObject(it)) }
-    private inline fun JSONArray.forEachObject(block: (JSONObject) -> Unit) { repeat(length()) { block(getJSONObject(it)) } }
-    private fun JSONArray.strings() = List(length()) { getString(it) }
-    private fun requireNonNegative(value: Long) { require(value >= 0L) { "金額が不正です" } }
-    private fun <T> requireUnique(values: List<T>, label: String) { require(values.size == values.toSet().size) { "$label が重複しています" } }
+data class BackupCounts(val transactions:Int,val recurringExpenses:Int,val importedStatements:Int,val paymentSources:Int,val categories:Int,val reconciliationMatches:Int=0)
+data class ValidatedBackup(val createdAt:String,val appVersion:String,val counts:BackupCounts,val snapshot:RoomSnapshot)
+object BackupCodec{
+ const val FORMAT_VERSION=3
+ fun encode(db:RecoFiDatabase,appVersion:String,createdAt:String=Instant.now().toString()):String{require(appVersion.isNotBlank());Instant.parse(createdAt);val data=RoomBackupAdapter.exportJson(db);return JSONObject().put("backupFormatVersion",FORMAT_VERSION).put("createdAt",createdAt).put("appVersion",appVersion).put("counts",counts(data).json()).put("data",data).toString(2)}
+ fun decodeAndValidate(text:String):ValidatedBackup=try{val root=JSONObject(text);require(root.getInt("backupFormatVersion")==FORMAT_VERSION){"非対応のバックアップ形式です"};val created=root.req("createdAt").also(Instant::parse);val version=root.req("appVersion");val data=root.getJSONObject("data");val snapshot=parse(data);val actual=counts(data);require(actual==root.getJSONObject("counts").toCounts()){"データ件数が一致しません"};ValidatedBackup(created,version,actual,snapshot)}catch(e:IllegalArgumentException){throw e}catch(e:Exception){throw IllegalArgumentException("バックアップファイルが破損しているか、必須項目が不足しています",e)}
+ private fun parse(d:JSONObject):RoomSnapshot{
+  val sources=d.array("paymentSources"){PaymentSourceEntity(it.req("id"),it.req("name"),it.req("type").also{v->PaymentSourceType.valueOf(v)},it.getInt("sortOrder"))}.uniqueBy("支払方法"){it.id};val sourceIds=sources.map{it.id}.toSet()
+  val categories=d.array("categories"){CategoryEntity(it.req("name"),it.getInt("sortOrder"))}.uniqueBy("カテゴリ"){it.name};val categoryNames=categories.map{it.name}.toSet()
+  val merchants=d.array("merchantTemplates"){MerchantTemplateEntity(it.req("value"),it.getInt("sortOrder"))}.uniqueBy("取引先"){it.value};val descriptions=d.array("descriptionTemplates"){DescriptionTemplateEntity(it.req("value"),it.getInt("sortOrder"))}.uniqueBy("内容"){it.value}
+  val recurring=mutableListOf<RecurringExpenseEntity>();val revisions=mutableListOf<RecurringPriceRevisionEntity>();d.getJSONArray("recurringExpenses").each{j->val id=j.getLong("id");val cat=j.req("category").also{require(it in categoryNames)};val src=j.req("paymentSourceId").also{require(it in sourceIds)};val start=j.req("startMonth").also{YearMonth.parse(it)};val contract=j.req("contractDate").also{LocalDate.parse(it)};val day=j.getInt("billingDay").also{require(it in 1..31)};val interval=j.getInt("intervalMonths").also{require(it>0)};recurring+=RecurringExpenseEntity(id,j.money("amount"),cat,j.getString("merchant"),j.getString("description"),day,start,contract,src,interval,j.optText("endDate")?.also{LocalDate.parse(it)});j.getJSONArray("priceRevisions").each{r->revisions+=RecurringPriceRevisionEntity(id,r.req("effectiveDate").also{LocalDate.parse(it)},r.money("amount"))}}
+  recurring.uniqueBy("固定費"){it.id};revisions.uniqueBy("料金改定"){it.recurringId to it.effectiveDate};val recurringIds=recurring.map{it.id}.toSet()
+  val tx=d.array("transactions"){j->TransactionEntity(j.getLong("id"),j.money("amount"),j.req("category").also{require(it in categoryNames)},j.getString("merchant"),j.getString("description"),j.getLong("usedAt"),j.optLongOrNull("recurringId").also{require(it==null||it in recurringIds)},j.req("paymentSourceId").also{require(it in sourceIds)})}.uniqueBy("明細"){it.id};val txIds=tx.map{it.id}.toSet()
+  val statements=mutableListOf<ImportedStatementEntity>();val entries=mutableListOf<StatementEntryEntity>();d.getJSONArray("importedStatements").each{j->val hash=j.req("fileHash");statements+=ImportedStatementEntity(hash,j.optText("statementMonth")?.also{YearMonth.parse(it)},j.optText("paymentSourceId").also{require(it==null||it in sourceIds)},j.req("fileName"));j.getJSONArray("entries").each{e->entries+=StatementEntryEntity(e.getLong("id"),hash,e.getInt("rowOrder"),e.req("date").also{LocalDate.parse(it)},e.money("amount"),e.getString("merchant"),e.getString("rawText"))}}
+  statements.uniqueBy("取込ファイル"){it.fileHash};entries.uniqueBy("取込明細ID"){it.id};entries.uniqueBy("取込明細行"){it.fileHash to it.rowOrder};val entryIds=entries.map{it.id}.toSet()
+  val matches=d.array("matches"){j->val eid=j.getLong("statementEntryId").also{require(it in entryIds)};val tid=j.optLongOrNull("transactionId").also{require(it==null||it in txIds)};val status=j.req("status").also{ReconciliationStatus.valueOf(it)};if(status==ReconciliationStatus.CONFIRMED.name)require(tid!=null);ReconciliationMatchEntity(eid,tid,status,j.optText("matchSource")?.also{MatchSource.valueOf(it)},j.optText("confidence")?.also{MatchConfidence.valueOf(it)},j.optIntOrNull("score"),j.optText("reasonCode"),j.optIntOrNull("dayDifference"),j.getLong("createdAt"),j.getLong("updatedAt"),j.optLongOrNull("confirmedAt"))}.uniqueBy("消込明細"){it.statementEntryId};require(matches.mapNotNull{it.transactionId}.let{it.size==it.toSet().size}){"同じ明細が複数へ割り当てられています"}
+  val rejected=d.array("rejectedCandidates"){j->RejectedReconciliationCandidateEntity(j.getLong("statementEntryId").also{require(it in entryIds)},j.getLong("transactionId").also{require(it in txIds)},j.getLong("rejectedAt"))}.uniqueBy("却下候補"){it.statementEntryId to it.transactionId}
+  val declarations=d.array("paymentSourceDeclarations"){j->MonthlyPaymentSourceDeclarationEntity(j.req("month").also{YearMonth.parse(it)},j.req("paymentSourceId").also{require(it in sourceIds)},j.req("status").also{require(it in setOf("NO_ACTIVITY","STATEMENT_IMPORTED"))},j.getLong("updatedAt"))}.uniqueBy("月次申告"){it.month to it.paymentSourceId}
+  val fingerprints=d.getJSONArray("fingerprints").strings().distinctOrThrow("fingerprint").map{ImportedFingerprintEntity(it,0)};val locks=d.getJSONArray("locks").strings().distinctOrThrow("ロック").map{MonthlyLockEntity(it.also{m->YearMonth.parse(m)},0)};val bo=d.getJSONObject("budgets");val budgets=bo.keys().asSequence().map{MonthlyBudgetEntity(it.also(YearMonth::parse),bo.getLong(it).also(::nonNegative))}.toList();return RoomSnapshot(tx,sources,categories,merchants,descriptions,recurring,revisions,statements,entries,fingerprints,matches,rejected,declarations,locks,budgets,AppBudgetSettingsEntity(defaultMonthlyBudget=d.getLong("defaultMonthlyBudget").also(::nonNegative)))
+ }
+ private fun counts(d:JSONObject)=BackupCounts(d.getJSONArray("transactions").length(),d.getJSONArray("recurringExpenses").length(),d.getJSONArray("importedStatements").length(),d.getJSONArray("paymentSources").length(),d.getJSONArray("categories").length(),d.getJSONArray("matches").length())
+ private fun BackupCounts.json()=JSONObject().put("transactions",transactions).put("recurringExpenses",recurringExpenses).put("importedStatements",importedStatements).put("paymentSources",paymentSources).put("categories",categories).put("reconciliationMatches",reconciliationMatches)
+ private fun JSONObject.toCounts()=BackupCounts(getInt("transactions"),getInt("recurringExpenses"),getInt("importedStatements"),getInt("paymentSources"),getInt("categories"),getInt("reconciliationMatches"))
+ private fun JSONObject.req(n:String)=getString(n).also{require(it.isNotBlank()){n}}
+ private fun JSONObject.optText(n:String)=if(!has(n)||isNull(n))null else getString(n).ifBlank{null};private fun JSONObject.optLongOrNull(n:String)=if(!has(n)||isNull(n))null else getLong(n);private fun JSONObject.optIntOrNull(n:String)=if(!has(n)||isNull(n))null else getInt(n);private fun JSONObject.money(n:String)=getLong(n).also(::nonNegative);private fun nonNegative(v:Long){require(v>=0)}
+ private inline fun <T> JSONObject.array(n:String,f:(JSONObject)->T)=List(getJSONArray(n).length()){f(getJSONArray(n).getJSONObject(it))};private inline fun JSONArray.each(f:(JSONObject)->Unit){repeat(length()){f(getJSONObject(it))}};private fun JSONArray.strings()=List(length()){getString(it)};private fun <T,K> List<T>.uniqueBy(label:String,key:(T)->K):List<T>{require(map(key).let{it.size==it.toSet().size}){"$label が重複しています"};return this};private fun <T> List<T>.distinctOrThrow(label:String):List<T>{require(size==toSet().size){"$label が重複しています"};return this}
 }
-

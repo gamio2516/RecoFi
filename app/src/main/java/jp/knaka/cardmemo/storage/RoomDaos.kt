@@ -8,6 +8,8 @@ import androidx.room.Upsert
     @Query("SELECT * FROM transactions ORDER BY usedAt DESC") fun loadAll(): List<TransactionEntity>
     @Upsert fun upsertAll(items: List<TransactionEntity>)
     @Query("DELETE FROM transactions") fun deleteAll()
+    @Query("SELECT * FROM transactions WHERE id = :id") fun loadById(id:Long): TransactionEntity?
+    @Query("DELETE FROM transactions WHERE id = :id") fun deleteById(id:Long)
 }
 
 @Dao interface ReferenceDataDao {
@@ -46,20 +48,35 @@ import androidx.room.Upsert
     @Upsert fun upsertFingerprints(items: List<ImportedFingerprintEntity>)
     @Query("DELETE FROM statement_entries") fun deleteEntries()
     @Query("DELETE FROM imported_statements") fun deleteStatements()
+    @Query("DELETE FROM imported_statements WHERE fileHash=:fileHash") fun deleteStatement(fileHash:String)
     @Query("DELETE FROM imported_fingerprints") fun deleteFingerprints()
+    @Query("SELECT * FROM statement_entries WHERE id = :id") fun loadEntry(id:Long): StatementEntryEntity?
 }
 
 @Dao interface MonthlyStateDao {
-    @Query("SELECT * FROM reconciliation_progress") fun loadProgress(): List<ReconciliationProgressEntity>
     @Query("SELECT * FROM monthly_locks") fun loadLocks(): List<MonthlyLockEntity>
     @Query("SELECT * FROM monthly_budgets") fun loadBudgets(): List<MonthlyBudgetEntity>
     @Query("SELECT * FROM app_budget_settings WHERE id = 1") fun loadBudgetSettings(): AppBudgetSettingsEntity?
-    @Upsert fun upsertProgress(items: List<ReconciliationProgressEntity>)
     @Upsert fun upsertLocks(items: List<MonthlyLockEntity>)
     @Upsert fun upsertBudgets(items: List<MonthlyBudgetEntity>)
     @Upsert fun upsertBudgetSettings(item: AppBudgetSettingsEntity)
-    @Query("DELETE FROM reconciliation_progress") fun deleteProgress()
     @Query("DELETE FROM monthly_locks") fun deleteLocks()
     @Query("DELETE FROM monthly_budgets") fun deleteBudgets()
     @Query("DELETE FROM app_budget_settings") fun deleteBudgetSettings()
+}
+
+@Dao interface ReconciliationDao {
+    @Query("SELECT * FROM reconciliation_matches") fun loadMatches():List<ReconciliationMatchEntity>
+    @Query("SELECT * FROM reconciliation_matches WHERE statementEntryId=:entryId") fun loadMatch(entryId:Long):ReconciliationMatchEntity?
+    @Query("SELECT * FROM reconciliation_matches WHERE transactionId=:transactionId") fun loadMatchesForTransaction(transactionId:Long):List<ReconciliationMatchEntity>
+    @Query("SELECT * FROM rejected_reconciliation_candidates") fun loadRejected():List<RejectedReconciliationCandidateEntity>
+    @Query("SELECT * FROM monthly_payment_source_declarations") fun loadDeclarations():List<MonthlyPaymentSourceDeclarationEntity>
+    @Upsert fun upsertMatch(item:ReconciliationMatchEntity)
+    @Upsert fun upsertMatches(items:List<ReconciliationMatchEntity>)
+    @Upsert fun upsertRejected(item:RejectedReconciliationCandidateEntity)
+    @Upsert fun upsertDeclarations(items:List<MonthlyPaymentSourceDeclarationEntity>)
+    @Query("DELETE FROM reconciliation_matches") fun deleteMatches()
+    @Query("DELETE FROM rejected_reconciliation_candidates") fun deleteRejected()
+    @Query("DELETE FROM monthly_payment_source_declarations") fun deleteDeclarations()
+    @Query("DELETE FROM reconciliation_matches WHERE statementEntryId=:entryId") fun deleteMatch(entryId:Long)
 }
