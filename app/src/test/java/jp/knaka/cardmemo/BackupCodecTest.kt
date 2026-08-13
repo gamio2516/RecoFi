@@ -1,104 +1,32 @@
 package jp.knaka.cardmemo
 
-import org.json.JSONArray
+import android.content.Context
+import androidx.room.Room
+import androidx.test.core.app.ApplicationProvider
+import jp.knaka.cardmemo.storage.*
 import org.json.JSONObject
-import org.junit.Assert.assertEquals
-import org.junit.Assert.assertThrows
-import org.junit.Test
+import org.junit.*
+import org.junit.Assert.*
+import org.junit.runner.RunWith
+import org.robolectric.RobolectricTestRunner
 
+@RunWith(RobolectricTestRunner::class)
 class BackupCodecTest {
-    private val preferences = mapOf<String, Any>(
-        "transactions" to JSONArray().put(JSONObject().apply { put("id", 1L); put("amount", 500); put("category", "食費"); put("usedAt", 1L) }).toString(),
-        "recurring_expenses" to "[]",
-        "imported_statements" to "[]",
-        "payment_sources" to JSONArray().put(JSONObject().apply { put("id", "card"); put("name", "カード") }).toString(),
-        "categories" to JSONArray(listOf("食費")).toString(),
-        "default_monthly_budget" to 100_000,
-        "locked_months" to setOf("2026-07"),
-    )
-
-    @Test fun roundTripPreservesMetadataCountsAndPreferences() {
-        val decoded = BackupCodec.decodeAndValidate(BackupCodec.encode(preferences, "1.0", "2026-08-12T00:00:00Z"))
-        assertEquals("1.0", decoded.appVersion)
-        assertEquals(1, decoded.counts.transactions)
-        assertEquals(1, decoded.counts.paymentSources)
-        assertEquals(100_000, decoded.preferences["default_monthly_budget"])
-        assertEquals(setOf("2026-07"), decoded.preferences["locked_months"])
-    }
-
-    @Test fun unsupportedFormatVersionIsRejected() {
-        val json = JSONObject(BackupCodec.encode(preferences, "1.0")).put("backupFormatVersion", 99).toString()
-        assertThrows(IllegalArgumentException::class.java) { BackupCodec.decodeAndValidate(json) }
-    }
-
-    @Test fun missingRequiredMetadataIsRejected() {
-        val json = JSONObject(BackupCodec.encode(preferences, "1.0")).apply { remove("createdAt") }.toString()
-        assertThrows(IllegalArgumentException::class.java) { BackupCodec.decodeAndValidate(json) }
-    }
-
-    @Test fun corruptJsonIsRejected() {
-        assertThrows(IllegalArgumentException::class.java) { BackupCodec.decodeAndValidate("{broken") }
-    }
-
-    @Test fun mismatchedCountsAreRejected() {
-        val json = JSONObject(BackupCodec.encode(preferences, "1.0"))
-        json.getJSONObject("counts").put("transactions", 999)
-        assertThrows(IllegalArgumentException::class.java) { BackupCodec.decodeAndValidate(json.toString()) }
-    }
-
-    @Test fun malformedMajorDataIsRejected() {
-        val invalid = preferences + ("transactions" to JSONArray().put(JSONObject().apply { put("amount", 500) }).toString())
-        assertThrows(IllegalArgumentException::class.java) { BackupCodec.encode(invalid, "1.0") }
-    }
-
-    @Test fun reconciliationAndLockStateArePreserved() {
-        val transaction = JSONObject().apply {
-            put("id", 7L); put("amount", 1200); put("category", "外食"); put("usedAt", 1L)
-            put("confirmed", true); put("paymentSourceId", "rakuten"); put("reconciledMonth", "2026-07"); put("suggested", true)
-        }
-        val progress = JSONObject().put("2026-07|rakuten", JSONObject().apply {
-            put("imported", 3); put("matched", 2); put("suggested", 1); put("confirmed", 3)
-        })
-        val source = preferences + mapOf(
-            "transactions" to JSONArray().put(transaction).toString(),
-            "reconciliation_progress" to progress.toString(),
-            "locked_months" to JSONArray(listOf("2026-07")).toString(),
-        )
-        val decoded = BackupCodec.decodeAndValidate(BackupCodec.encode(source, "1.0"))
-        val restoredTransaction = JSONArray(decoded.preferences["transactions"] as String).getJSONObject(0)
-        val restoredProgress = JSONObject(decoded.preferences["reconciliation_progress"] as String).getJSONObject("2026-07|rakuten")
-        assertEquals(true, restoredTransaction.getBoolean("confirmed"))
-        assertEquals(true, restoredTransaction.getBoolean("suggested"))
-        assertEquals("2026-07", restoredTransaction.getString("reconciledMonth"))
-        assertEquals(2, restoredProgress.getInt("matched"))
-        assertEquals(1, restoredProgress.getInt("suggested"))
-        assertEquals(3, restoredProgress.getInt("confirmed"))
-        assertEquals("2026-07", JSONArray(decoded.preferences["locked_months"] as String).getString(0))
-    }
-
-    @Test fun missingReconciliationStateFieldIsRejected() {
-        val source = preferences + ("reconciliation_progress" to JSONObject().put("2026-07|rakuten", JSONObject().apply {
-            put("imported", 1); put("matched", 1); put("suggested", 0); put("confirmed", 1)
-        }).toString())
-        val root = JSONObject(BackupCodec.encode(source, "1.0"))
-        val stored = root.getJSONObject("preferences").getJSONObject("reconciliation_progress")
-        val progress = JSONObject(stored.getString("value"))
-        progress.getJSONObject("2026-07|rakuten").remove("matched")
-        stored.put("value", progress.toString())
-        assertThrows(IllegalArgumentException::class.java) { BackupCodec.decodeAndValidate(root.toString()) }
-    }
-
-    @Test fun encodingIsDeterministicForSameTimestampAndData() {
-        val first = BackupCodec.encode(preferences, "1.0", "2026-08-12T00:00:00Z")
-        val second = BackupCodec.encode(preferences.toList().reversed().toMap(), "1.0", "2026-08-12T00:00:00Z")
-        assertEquals(first, second)
-    }
-
-    @Test fun reconciliationCountsCannotExceedImportedCount() {
-        val progress = JSONObject().put("2026-07|rakuten", JSONObject().apply {
-            put("imported", 1); put("matched", 2); put("suggested", 0); put("confirmed", 0)
-        })
-        val invalid = preferences + ("reconciliation_progress" to progress.toString())
-        assertThrows(IllegalArgumentException::class.java) { BackupCodec.encode(invalid, "1.0") }
-    }
+ private lateinit var db:RecoFiDatabase
+ @Before fun setup(){db=Room.inMemoryDatabaseBuilder(ApplicationProvider.getApplicationContext<Context>(),RecoFiDatabase::class.java).allowMainThreadQueries().build();seed()}
+ @After fun close(){db.close()}
+ private fun seed(){db.referenceData().upsertPaymentSources(listOf(PaymentSourceEntity("card","カード",true,0)));db.referenceData().upsertCategories(listOf(CategoryEntity("食費",0)));db.referenceData().upsertMerchants(listOf(MerchantTemplateEntity("西友",0)));db.referenceData().upsertDescriptions(listOf(DescriptionTemplateEntity("食料品",0)));db.transactions().upsertAll(listOf(TransactionEntity(1,500L,"食費","西友","食料品",1L,true,null,"card","2026-07",true)));db.monthlyState().upsertProgress(listOf(ReconciliationProgressEntity("2026-07","card",1,0,1,1)));db.monthlyState().upsertLocks(listOf(MonthlyLockEntity("2026-07",1L)));db.monthlyState().upsertBudgetSettings(AppBudgetSettingsEntity(defaultMonthlyBudget=100000L))}
+ private fun encoded()=BackupCodec.encode(db,"1.0","2026-08-13T00:00:00Z")
+ @Test fun roundTripPreservesMetadataCountsMerchantAndDescription(){val d=BackupCodec.decodeAndValidate(encoded());assertEquals("1.0",d.appVersion);assertEquals("2026-08-13T00:00:00Z",d.createdAt);assertEquals(1,d.counts.transactions);assertEquals("西友",d.snapshot.transactions.single().merchant);assertEquals("食料品",d.snapshot.transactions.single().description)}
+ @Test fun unsupportedFormatVersionRejected(){val root=JSONObject(encoded()).put("backupFormatVersion",99);assertFailure(root)}
+ @Test fun missingRequiredMetadataRejected(){val root=JSONObject(encoded()).apply{remove("createdAt")};assertFailure(root)}
+ @Test fun corruptJsonRejected(){assertTrue(runCatching{BackupCodec.decodeAndValidate("{broken")}.isFailure)}
+ @Test fun mismatchedCountsRejected(){val root=JSONObject(encoded());root.getJSONObject("counts").put("transactions",999);assertFailure(root)}
+ @Test fun missingRequiredTransactionFieldRejected(){val root=JSONObject(encoded());root.getJSONObject("data").getJSONArray("transactions").getJSONObject(0).remove("merchant");assertFailure(root)}
+ @Test fun reconciliationAndLockStatePreserved(){val d=BackupCodec.decodeAndValidate(encoded());val t=d.snapshot.transactions.single();assertTrue(t.confirmed);assertTrue(t.suggested);assertEquals("2026-07",t.reconciledMonth);assertEquals(1,d.snapshot.progress.single().suggested);assertEquals("2026-07",d.snapshot.locks.single().month)}
+ @Test fun missingReconciliationStateFieldRejected(){val root=JSONObject(encoded());root.getJSONObject("data").getJSONArray("progress").getJSONObject(0).remove("matched");assertFailure(root)}
+ @Test fun encodingDeterministicForSameDataAndTimestamp(){assertEquals(encoded(),encoded())}
+ @Test fun reconciliationCountsCannotExceedImported(){val root=JSONObject(encoded());root.getJSONObject("data").getJSONArray("progress").getJSONObject(0).put("matched",2);assertFailure(root)}
+ @Test fun negativeMoneyRejected(){val root=JSONObject(encoded());root.getJSONObject("data").getJSONArray("transactions").getJSONObject(0).put("amount",-1);assertFailure(root)}
+ private fun assertFailure(root:JSONObject){assertTrue(runCatching{BackupCodec.decodeAndValidate(root.toString())}.isFailure)}
 }

@@ -22,7 +22,7 @@ object RecurringExpensePolicy {
         return ChronoUnit.MONTHS.between(firstMonth, month) % expense.intervalMonths == 0L
     }
 
-    fun amountOn(expense: RecurringExpense, date: LocalDate): Int = expense.priceRevisions
+    fun amountOn(expense: RecurringExpense, date: LocalDate): Long = expense.priceRevisions
         .filter { !LocalDate.parse(it.effectiveDate).isAfter(date) }
         .maxByOrNull { it.effectiveDate }
         ?.amount ?: expense.amount

@@ -7,5 +7,4 @@ class RecoFiRoomRepository(val database: RecoFiDatabase) {
     val recurringExpenses: RecurringExpenseDao get() = database.recurringExpenses()
     val statements: StatementDao get() = database.statements()
     val monthlyState: MonthlyStateDao get() = database.monthlyState()
-    val migrations: StorageMigrationDao get() = database.migrations()
 }

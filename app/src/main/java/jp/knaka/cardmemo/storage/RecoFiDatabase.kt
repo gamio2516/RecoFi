@@ -7,13 +7,13 @@ import androidx.room.RoomDatabase
 
 @Database(
     entities = [
-        PaymentSourceEntity::class, CategoryEntity::class, NoteTemplateEntity::class,
+        PaymentSourceEntity::class, CategoryEntity::class, MerchantTemplateEntity::class, DescriptionTemplateEntity::class,
         RecurringExpenseEntity::class, RecurringPriceRevisionEntity::class, TransactionEntity::class,
         ImportedStatementEntity::class, StatementEntryEntity::class, ImportedFingerprintEntity::class,
         ReconciliationProgressEntity::class, MonthlyLockEntity::class, MonthlyBudgetEntity::class,
-        AppBudgetSettingsEntity::class, StorageMigrationEntity::class,
+        AppBudgetSettingsEntity::class,
     ],
-    version = 1,
+    version = 2,
     exportSchema = true,
 )
 abstract class RecoFiDatabase : RoomDatabase() {
@@ -22,7 +22,6 @@ abstract class RecoFiDatabase : RoomDatabase() {
     abstract fun recurringExpenses(): RecurringExpenseDao
     abstract fun statements(): StatementDao
     abstract fun monthlyState(): MonthlyStateDao
-    abstract fun migrations(): StorageMigrationDao
 
     companion object {
         const val DATABASE_NAME = "recofi.db"

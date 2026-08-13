@@ -20,7 +20,7 @@ object RecurringTransactionGenerator {
         if (alreadyExists) return@mapNotNull null
         val amount = RecurringExpensePolicy.amountOn(expense, billingDate)
         Transaction(
-            id = idProvider(), amount = amount, category = expense.category, note = expense.note,
+            id = idProvider(), amount = amount, category = expense.category, merchant = expense.merchant, description = expense.description,
             usedAt = billingDate.atStartOfDay(zoneId).toInstant().toEpochMilli(), recurringId = expense.id,
             paymentSourceId = expense.paymentSourceId,
         )

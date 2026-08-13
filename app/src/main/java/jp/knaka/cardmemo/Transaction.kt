@@ -2,9 +2,10 @@ package jp.knaka.cardmemo
 
 data class Transaction(
     val id: Long,
-    val amount: Int,
+    val amount: Long,
     val category: String,
-    val note: String,
+    val merchant: String,
+    val description: String,
     val usedAt: Long,
     val confirmed: Boolean = false,
     val recurringId: Long? = null,
@@ -15,9 +16,10 @@ data class Transaction(
 
 data class RecurringExpense(
     val id: Long,
-    val amount: Int,
+    val amount: Long,
     val category: String,
-    val note: String,
+    val merchant: String,
+    val description: String,
     val billingDay: Int,
     val startMonth: String,
     val contractDate: String,
@@ -27,13 +29,13 @@ data class RecurringExpense(
     val priceRevisions: List<PriceRevision> = emptyList(),
 )
 
-data class PriceRevision(val effectiveDate: String, val amount: Int)
+data class PriceRevision(val effectiveDate: String, val amount: Long)
 
 data class PaymentSource(val id: String, val name: String, val isCard: Boolean)
 
 data class CardStatementEntry(
     val date: java.time.LocalDate,
-    val amount: Int,
+    val amount: Long,
     val merchant: String,
     val rawText: String,
 )

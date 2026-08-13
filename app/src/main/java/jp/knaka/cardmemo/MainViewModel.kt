@@ -17,8 +17,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val _categories = MutableStateFlow(settingsRepository.loadCategories())
     val categories = _categories.asStateFlow()
     private val initialSources = settingsRepository.loadPaymentSources()
-    private val _notesBySource = MutableStateFlow(initialSources.associate { it.id to settingsRepository.loadNotes(it.id) })
-    val notesBySource = _notesBySource.asStateFlow()
+    private val _merchantTemplates = MutableStateFlow(settingsRepository.loadMerchants())
+    val merchantTemplates = _merchantTemplates.asStateFlow()
+    private val _descriptionTemplates = MutableStateFlow(settingsRepository.loadDescriptions())
+    val descriptionTemplates = _descriptionTemplates.asStateFlow()
     private val _recurringExpenses = MutableStateFlow(settingsRepository.loadRecurringExpenses())
     val recurringExpenses = _recurringExpenses.asStateFlow()
     private val _monthlyBudget = MutableStateFlow(settingsRepository.loadMonthlyBudgets())
@@ -37,8 +39,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     init { ensureRecurringFor(YearMonth.now()) }
 
-    fun addTransaction(amount: Int, category: String, note: String, usedAt: Long, paymentSourceId: String, id: Long? = null) {
-        val item = Transaction(id ?: System.currentTimeMillis(), amount, category, note, usedAt, paymentSourceId = paymentSourceId)
+    fun addTransaction(amount: Long, category: String, merchant: String, description: String, usedAt: Long, paymentSourceId: String, id: Long? = null) {
+        val item = Transaction(id ?: System.currentTimeMillis(), amount, category, merchant, description, usedAt, paymentSourceId = paymentSourceId)
         updateTransactions(if (id == null) _transactions.value + item else _transactions.value.map { if (it.id == id) item.copy(confirmed = it.confirmed, recurringId = it.recurringId, reconciledMonth = it.reconciledMonth, suggested = it.suggested) else it })
     }
 
@@ -101,10 +103,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         var updated = _transactions.value
         entries.forEach { entry ->
             val usedAt = entry.date.atStartOfDay(ZoneId.systemDefault()).toInstant().toEpochMilli()
-            val exists = updated.any { it.paymentSourceId == sourceId && it.amount == entry.amount && it.usedAt == usedAt && normalizeMerchant(it.note) == normalizeMerchant(entry.merchant) }
+            val exists = updated.any { it.paymentSourceId == sourceId && it.amount == entry.amount && it.usedAt == usedAt && normalizeMerchant(it.merchant) == normalizeMerchant(entry.merchant) }
             if (!exists) {
-                val category = _transactions.value.filter { normalizeMerchant(it.note) == normalizeMerchant(entry.merchant) }.groupingBy { it.category }.eachCount().maxByOrNull { it.value }?.key ?: _categories.value.firstOrNull { it == "その他" } ?: _categories.value.lastOrNull().orEmpty()
-                updated += Transaction(System.nanoTime(), entry.amount, category, entry.merchant, usedAt, confirmed = false, paymentSourceId = sourceId, reconciledMonth = statementMonth.toString(), suggested = true)
+                val category = _transactions.value.filter { normalizeMerchant(it.merchant) == normalizeMerchant(entry.merchant) }.groupingBy { it.category }.eachCount().maxByOrNull { it.value }?.key ?: _categories.value.firstOrNull { it == "その他" } ?: _categories.value.lastOrNull().orEmpty()
+                updated += Transaction(System.nanoTime(), entry.amount, category, entry.merchant, "", usedAt, confirmed = false, paymentSourceId = sourceId, reconciledMonth = statementMonth.toString(), suggested = true)
             }
         }
         updateTransactions(updated)
@@ -113,19 +115,22 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun addCategory(value: String) { val clean = value.trim(); if (_categories.value.size < 15 && clean.isNotEmpty() && clean !in _categories.value) { _categories.value += clean; settingsRepository.saveCategories(_categories.value) } }
     fun deleteCategory(value: String) { if (_categories.value.size > 1) { _categories.value -= value; settingsRepository.saveCategories(_categories.value) } }
     fun moveCategory(value: String, offset: Int) { val index = _categories.value.indexOf(value); val target = index + offset; if (index >= 0 && target in _categories.value.indices) { val updated = _categories.value.toMutableList(); val moved = updated.removeAt(index); updated.add(target, moved); _categories.value = updated; settingsRepository.saveCategories(updated) } }
-    fun addFrequentNote(sourceId: String, value: String) { val clean = value.trim(); val current = _notesBySource.value[sourceId].orEmpty(); if (current.size < 15 && clean.isNotEmpty() && clean !in current) { val updated = current + clean; _notesBySource.value = _notesBySource.value + (sourceId to updated); settingsRepository.saveNotes(sourceId, updated) } }
-    fun deleteFrequentNote(sourceId: String, value: String) { val updated = _notesBySource.value[sourceId].orEmpty() - value; _notesBySource.value = _notesBySource.value + (sourceId to updated); settingsRepository.saveNotes(sourceId, updated) }
-    fun moveFrequentNote(sourceId: String, value: String, offset: Int) { val current = _notesBySource.value[sourceId].orEmpty(); val index = current.indexOf(value); val target = index + offset; if (index >= 0 && target in current.indices) { val updated = current.toMutableList(); val moved = updated.removeAt(index); updated.add(target, moved); _notesBySource.value = _notesBySource.value + (sourceId to updated); settingsRepository.saveNotes(sourceId, updated) } }
+    fun addMerchant(value:String)=addTemplate(_merchantTemplates,value,settingsRepository::saveMerchants)
+    fun deleteMerchant(value:String){_merchantTemplates.value-=value;settingsRepository.saveMerchants(_merchantTemplates.value)}
+    fun moveMerchant(value:String,offset:Int)=moveTemplate(_merchantTemplates,value,offset,settingsRepository::saveMerchants)
+    fun addDescription(value:String)=addTemplate(_descriptionTemplates,value,settingsRepository::saveDescriptions)
+    fun deleteDescription(value:String){_descriptionTemplates.value-=value;settingsRepository.saveDescriptions(_descriptionTemplates.value)}
+    fun moveDescription(value:String,offset:Int)=moveTemplate(_descriptionTemplates,value,offset,settingsRepository::saveDescriptions)
 
-    fun setMonthlyBudget(month: YearMonth, amount: Int) { val clean = amount.coerceAtLeast(0); _monthlyBudget.value = if (clean == 0) _monthlyBudget.value - month.toString() else _monthlyBudget.value + (month.toString() to clean); settingsRepository.saveMonthlyBudgets(_monthlyBudget.value) }
-    fun setDefaultMonthlyBudget(amount: Int) { _defaultMonthlyBudget.value = amount.coerceAtLeast(0); settingsRepository.saveDefaultMonthlyBudget(_defaultMonthlyBudget.value) }
+    fun setMonthlyBudget(month: YearMonth, amount: Long) { val clean = amount.coerceAtLeast(0); _monthlyBudget.value = if (clean == 0L) _monthlyBudget.value - month.toString() else _monthlyBudget.value + (month.toString() to clean); settingsRepository.saveMonthlyBudgets(_monthlyBudget.value) }
+    fun setDefaultMonthlyBudget(amount: Long) { _defaultMonthlyBudget.value = amount.coerceAtLeast(0); settingsRepository.saveDefaultMonthlyBudget(_defaultMonthlyBudget.value) }
 
-    fun addPaymentSource(name: String) { val clean = name.trim(); if (clean.isNotEmpty() && _paymentSources.value.none { it.name == clean }) { val source = PaymentSource("source_${System.currentTimeMillis()}", clean, false); _paymentSources.value += source; _notesBySource.value = _notesBySource.value + (source.id to emptyList()); settingsRepository.savePaymentSources(_paymentSources.value) } }
+    fun addPaymentSource(name: String) { val clean = name.trim(); if (clean.isNotEmpty() && _paymentSources.value.none { it.name == clean }) { val source = PaymentSource("source_${System.currentTimeMillis()}", clean, false); _paymentSources.value += source; settingsRepository.savePaymentSources(_paymentSources.value) } }
     fun deletePaymentSource(id: String) { if (_paymentSources.value.size > 1 && _transactions.value.none { it.paymentSourceId == id } && _recurringExpenses.value.none { it.paymentSourceId == id }) { _paymentSources.value = _paymentSources.value.filterNot { it.id == id }; settingsRepository.savePaymentSources(_paymentSources.value) } }
 
-    fun saveRecurringExpense(id: Long?, amount: Int, billingDay: Int, category: String, note: String, contractDate: LocalDate, paymentSourceId: String, intervalMonths: Int) {
+    fun saveRecurringExpense(id: Long?, amount: Long, billingDay: Int, category: String, merchant: String, description: String, contractDate: LocalDate, paymentSourceId: String, intervalMonths: Int) {
         val previous = _recurringExpenses.value.firstOrNull { it.id == id }
-        val item = RecurringExpense(id ?: System.currentTimeMillis(), amount, category, note.trim(), billingDay.coerceIn(1, 31), YearMonth.from(contractDate).toString(), contractDate.toString(), paymentSourceId, intervalMonths.coerceAtLeast(1), previous?.endDate, previous?.priceRevisions.orEmpty())
+        val item = RecurringExpense(id ?: System.currentTimeMillis(), amount, category, merchant.trim(), description.trim(), billingDay.coerceIn(1, 31), YearMonth.from(contractDate).toString(), contractDate.toString(), paymentSourceId, intervalMonths.coerceAtLeast(1), previous?.endDate, previous?.priceRevisions.orEmpty())
         _recurringExpenses.value = if (id == null) _recurringExpenses.value + item else _recurringExpenses.value.map { if (it.id == id) item else it }
         settingsRepository.saveRecurringExpenses(_recurringExpenses.value)
         if (id != null) updateTransactions(_transactions.value.filterNot { it.recurringId == id && it.yearMonth() >= YearMonth.now() })
@@ -138,7 +143,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         updateTransactions(_transactions.value.filterNot { it.recurringId == id && Instant.ofEpochMilli(it.usedAt).atZone(ZoneId.systemDefault()).toLocalDate().isAfter(endDate) })
     }
 
-    fun reviseRecurringExpense(id: Long, effectiveDate: LocalDate, amount: Int) {
+    fun reviseRecurringExpense(id: Long, effectiveDate: LocalDate, amount: Long) {
         _recurringExpenses.value = _recurringExpenses.value.map { expense -> if (expense.id == id) expense.copy(priceRevisions = (expense.priceRevisions.filterNot { it.effectiveDate == effectiveDate.toString() } + PriceRevision(effectiveDate.toString(), amount)).sortedBy { it.effectiveDate }) else expense }
         settingsRepository.saveRecurringExpenses(_recurringExpenses.value)
         updateTransactions(_transactions.value.filterNot { transaction -> transaction.recurringId == id && !Instant.ofEpochMilli(transaction.usedAt).atZone(ZoneId.systemDefault()).toLocalDate().isBefore(effectiveDate) })
@@ -169,4 +174,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private fun Transaction.yearMonth(): YearMonth = YearMonth.from(Instant.ofEpochMilli(usedAt).atZone(ZoneId.systemDefault()))
     private fun normalizeMerchant(value: String) = value.lowercase().filter { it.isLetterOrDigit() }
     private fun updateTransactions(items: List<Transaction>) { _transactions.value = items.sortedByDescending { it.usedAt }; transactionRepository.save(_transactions.value) }
+    private fun addTemplate(flow:MutableStateFlow<List<String>>,value:String,save:(List<String>)->Unit){val clean=value.trim();if(flow.value.size<15&&clean.isNotEmpty()&&clean !in flow.value){flow.value+=clean;save(flow.value)}}
+    private fun moveTemplate(flow:MutableStateFlow<List<String>>,value:String,offset:Int,save:(List<String>)->Unit){val i=flow.value.indexOf(value);val target=i+offset;if(i>=0&&target in flow.value.indices){val list=flow.value.toMutableList();val moved=list.removeAt(i);list.add(target,moved);flow.value=list;save(list)}}
 }

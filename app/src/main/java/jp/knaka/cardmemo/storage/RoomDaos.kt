@@ -13,11 +13,14 @@ import androidx.room.Upsert
 @Dao interface ReferenceDataDao {
     @Query("SELECT * FROM payment_sources ORDER BY sortOrder") fun loadPaymentSources(): List<PaymentSourceEntity>
     @Query("SELECT * FROM categories ORDER BY sortOrder") fun loadCategories(): List<CategoryEntity>
-    @Query("SELECT * FROM note_templates ORDER BY paymentSourceId, sortOrder") fun loadNotes(): List<NoteTemplateEntity>
+    @Query("SELECT * FROM merchant_templates ORDER BY sortOrder") fun loadMerchants(): List<MerchantTemplateEntity>
+    @Query("SELECT * FROM description_templates ORDER BY sortOrder") fun loadDescriptions(): List<DescriptionTemplateEntity>
     @Upsert fun upsertPaymentSources(items: List<PaymentSourceEntity>)
     @Upsert fun upsertCategories(items: List<CategoryEntity>)
-    @Upsert fun upsertNotes(items: List<NoteTemplateEntity>)
-    @Query("DELETE FROM note_templates") fun deleteNotes()
+    @Upsert fun upsertMerchants(items: List<MerchantTemplateEntity>)
+    @Upsert fun upsertDescriptions(items: List<DescriptionTemplateEntity>)
+    @Query("DELETE FROM merchant_templates") fun deleteMerchants()
+    @Query("DELETE FROM description_templates") fun deleteDescriptions()
     @Query("DELETE FROM categories") fun deleteCategories()
     @Query("DELETE FROM payment_sources") fun deletePaymentSources()
     @Query("DELETE FROM categories WHERE name = :name") fun deleteCategory(name: String)
@@ -59,9 +62,4 @@ import androidx.room.Upsert
     @Query("DELETE FROM monthly_locks") fun deleteLocks()
     @Query("DELETE FROM monthly_budgets") fun deleteBudgets()
     @Query("DELETE FROM app_budget_settings") fun deleteBudgetSettings()
-}
-
-@Dao interface StorageMigrationDao {
-    @Query("SELECT * FROM storage_migrations WHERE migrationVersion = :version") fun find(version: Int): StorageMigrationEntity?
-    @Upsert fun upsert(item: StorageMigrationEntity)
 }

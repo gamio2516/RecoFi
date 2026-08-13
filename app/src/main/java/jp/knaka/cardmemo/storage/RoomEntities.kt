@@ -11,13 +11,11 @@ data class PaymentSourceEntity(@PrimaryKey val id: String, val name: String, val
 @Entity(tableName = "categories", indices = [Index(value = ["name"], unique = true)])
 data class CategoryEntity(@PrimaryKey val name: String, val sortOrder: Int)
 
-@Entity(
-    tableName = "note_templates",
-    primaryKeys = ["paymentSourceId", "note"],
-    foreignKeys = [ForeignKey(entity = PaymentSourceEntity::class, parentColumns = ["id"], childColumns = ["paymentSourceId"], onDelete = ForeignKey.RESTRICT)],
-    indices = [Index("paymentSourceId")],
-)
-data class NoteTemplateEntity(val paymentSourceId: String, val note: String, val sortOrder: Int)
+@Entity(tableName = "merchant_templates")
+data class MerchantTemplateEntity(@PrimaryKey val value: String, val sortOrder: Int)
+
+@Entity(tableName = "description_templates")
+data class DescriptionTemplateEntity(@PrimaryKey val value: String, val sortOrder: Int)
 
 @Entity(
     tableName = "recurring_expenses",
@@ -31,7 +29,8 @@ data class RecurringExpenseEntity(
     @PrimaryKey val id: Long,
     val amount: Long,
     val category: String,
-    val note: String,
+    val merchant: String,
+    val description: String,
     val billingDay: Int,
     val startMonth: String,
     val contractDate: String,
@@ -61,7 +60,8 @@ data class TransactionEntity(
     @PrimaryKey val id: Long,
     val amount: Long,
     val category: String,
-    val note: String,
+    val merchant: String,
+    val description: String,
     val usedAt: Long,
     val confirmed: Boolean,
     val recurringId: Long?,
@@ -72,7 +72,7 @@ data class TransactionEntity(
 
 @Entity(
     tableName = "imported_statements",
-    indices = [Index(value = ["statementMonth", "paymentSourceId"], unique = true)],
+    indices = [Index(value = ["statementMonth", "paymentSourceId"], unique = true), Index("paymentSourceId")],
     foreignKeys = [ForeignKey(entity = PaymentSourceEntity::class, parentColumns = ["id"], childColumns = ["paymentSourceId"], onDelete = ForeignKey.RESTRICT)],
 )
 data class ImportedStatementEntity(
@@ -118,11 +118,3 @@ data class MonthlyBudgetEntity(@PrimaryKey val month: String, val amount: Long)
 data class AppBudgetSettingsEntity(@PrimaryKey val id: Int = SINGLETON_ID, val defaultMonthlyBudget: Long) {
     companion object { const val SINGLETON_ID = 1 }
 }
-
-@Entity(tableName = "storage_migrations", indices = [Index(value = ["legacyFingerprint"], unique = true)])
-data class StorageMigrationEntity(
-    @PrimaryKey val migrationVersion: Int,
-    val legacyFingerprint: String,
-    val completedAt: Long,
-    val sourceRetained: Boolean,
-)

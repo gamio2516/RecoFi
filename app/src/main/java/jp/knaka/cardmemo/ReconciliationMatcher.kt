@@ -28,7 +28,7 @@ object ReconciliationMatcher {
                     val date = transaction.localDate(zoneId)
                     val dayGap = abs(ChronoUnit.DAYS.between(date, entry.date))
                     if (dayGap > MAX_DAY_GAP) return@mapNotNull null
-                    Candidate(transaction, score(dayGap, transaction.note, entry.merchant))
+                    Candidate(transaction, score(dayGap, transaction.merchant, entry.merchant))
                 }
                 .filter { it.score >= MIN_SCORE }
                 .sortedWith(compareByDescending<Candidate> { it.score }.thenBy { it.transaction.id })
@@ -44,7 +44,7 @@ object ReconciliationMatcher {
     }
 
     fun normalizeMerchant(value: String): String {
-        var normalized = value.lowercase()
+        var normalized = java.text.Normalizer.normalize(value, java.text.Normalizer.Form.NFKC).lowercase()
             .replace("スターバックス", "starbucks")
             .replace("スタバ", "starbucks")
             .replace("珈琲", "coffee")
@@ -54,9 +54,9 @@ object ReconciliationMatcher {
         return normalized
     }
 
-    private fun score(dayGap: Long, note: String, merchant: String): Int {
+    private fun score(dayGap: Long, transactionMerchant: String, statementMerchant: String): Int {
         val dateScore = 80 - dayGap.toInt() * 5
-        val merchantScore = (similarity(normalizeMerchant(note), normalizeMerchant(merchant)) * 20).toInt()
+        val merchantScore = (similarity(normalizeMerchant(transactionMerchant), normalizeMerchant(statementMerchant)) * 20).toInt()
         return dateScore + merchantScore
     }
 

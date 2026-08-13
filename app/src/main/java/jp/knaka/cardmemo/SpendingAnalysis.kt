@@ -8,8 +8,8 @@ data class SpendingAnalysisResult(
     val monthRows: List<Transaction>,
     val previousMonthRows: List<Transaction>,
     val analysisRows: List<Transaction>,
-    val categoryTotals: List<Pair<String, Int>>,
-    val total: Int,
+    val categoryTotals: List<Pair<String, Long>>,
+    val total: Long,
 )
 
 object SpendingAnalysis {

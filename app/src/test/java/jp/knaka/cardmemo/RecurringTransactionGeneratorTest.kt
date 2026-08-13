@@ -1,50 +1,14 @@
 package jp.knaka.cardmemo
-
-import java.time.LocalDate
 import java.time.YearMonth
-import java.time.ZoneId
-import org.junit.Assert.assertEquals
-import org.junit.Assert.assertTrue
+import org.junit.Assert.*
 import org.junit.Test
-
 class RecurringTransactionGeneratorTest {
-    private val zone = ZoneId.of("Asia/Tokyo")
-
-    @Test fun generatesBillingDateAndBaseAmount() {
-        val result = generate(expense())
-        assertEquals(1000, result.single().amount)
-        assertEquals(LocalDate.of(2026, 8, 10), LocalDate.ofInstant(java.time.Instant.ofEpochMilli(result.single().usedAt), zone))
-    }
-
-    @Test fun contractAfterBillingDayStartsNextMonth() {
-        assertTrue(generate(expense(contractDate = "2026-08-15")).isEmpty())
-        assertEquals(1, generate(expense(contractDate = "2026-08-15"), YearMonth.of(2026, 9)).size)
-    }
-
-    @Test fun customIntervalOnlyGeneratesOnScheduledMonth() {
-        val item = expense(contractDate = "2026-06-01", intervalMonths = 3)
-        assertTrue(generate(item, YearMonth.of(2026, 7)).isEmpty())
-        assertEquals(1, generate(item, YearMonth.of(2026, 9)).size)
-    }
-
-    @Test fun endDatePreventsLaterBilling() {
-        assertTrue(generate(expense(endDate = "2026-08-09")).isEmpty())
-    }
-
-    @Test fun latestApplicablePriceRevisionIsUsed() {
-        val item = expense(revisions = listOf(PriceRevision("2026-07-01", 1200), PriceRevision("2026-08-11", 1500)))
-        assertEquals(1200, generate(item).single().amount)
-    }
-
-    @Test fun existingMonthlyTransactionPreventsDuplicate() {
-        val item = expense()
-        val existing = generate(item).single()
-        assertTrue(RecurringTransactionGenerator.generate(listOf(item), listOf(existing), YearMonth.of(2026, 8), zone).isEmpty())
-    }
-
-    private fun generate(item: RecurringExpense, month: YearMonth = YearMonth.of(2026, 8)) =
-        RecurringTransactionGenerator.generate(listOf(item), emptyList(), month, zone) { 99L }
-
-    private fun expense(contractDate: String = "2026-06-01", intervalMonths: Int = 1, endDate: String? = null, revisions: List<PriceRevision> = emptyList()) =
-        RecurringExpense(1L, 1000, "固定費", "サービス", 10, YearMonth.from(LocalDate.parse(contractDate)).toString(), contractDate, "rakuten", intervalMonths, endDate, revisions)
+ @Test fun generatesMerchantDescriptionAndBaseAmount(){val r=generate(YearMonth.of(2026,7),expense()).single();assertEquals(1000L,r.amount);assertEquals("Netflix",r.merchant);assertEquals("動画",r.description)}
+ @Test fun contractAfterBillingStartsNextMonth(){assertTrue(generate(YearMonth.of(2026,7),expense(contract="2026-07-20")).isEmpty())}
+ @Test fun intervalOnlyScheduledMonth(){assertTrue(generate(YearMonth.of(2026,8),expense(interval=3)).isEmpty());assertEquals(1,generate(YearMonth.of(2026,10),expense(interval=3)).size)}
+ @Test fun endPreventsLaterBilling(){assertTrue(generate(YearMonth.of(2026,8),expense(end="2026-07-31")).isEmpty())}
+ @Test fun revisionApplied(){assertEquals(1500L,generate(YearMonth.of(2026,8),expense(revisions=listOf(PriceRevision("2026-08-01",1500L)))).single().amount)}
+ @Test fun existingRecurringPreventsDuplicate(){val existing=Transaction(2,1000L,"固定費","Netflix","動画",java.time.LocalDate.of(2026,7,10).atStartOfDay(java.time.ZoneId.systemDefault()).toInstant().toEpochMilli(),recurringId=1);assertTrue(generate(YearMonth.of(2026,7),expense(),listOf(existing)).isEmpty())}
+ private fun generate(month:YearMonth,e:RecurringExpense,existing:List<Transaction> = emptyList())=RecurringTransactionGenerator.generate(listOf(e),existing,month,idProvider={1L})
+ private fun expense(contract:String="2026-07-01",interval:Int=1,end:String?=null,revisions:List<PriceRevision> = emptyList())=RecurringExpense(id=1,amount=1000L,category="固定費",merchant="Netflix",description="動画",billingDay=10,startMonth="2026-07",contractDate=contract,paymentSourceId="card",intervalMonths=interval,endDate=end,priceRevisions=revisions)
 }

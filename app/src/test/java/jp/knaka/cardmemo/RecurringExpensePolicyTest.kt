@@ -1,40 +1,12 @@
 package jp.knaka.cardmemo
-
 import java.time.LocalDate
-import java.time.YearMonth
-import org.junit.Assert.assertEquals
-import org.junit.Assert.assertFalse
-import org.junit.Assert.assertTrue
+import org.junit.Assert.*
 import org.junit.Test
-
 class RecurringExpensePolicyTest {
-    @Test fun endDateIsInclusiveAndFollowingDayIsInactive() {
-        val expense = expense(endDate = "2026-08-10")
-        assertTrue(RecurringExpensePolicy.isActiveOn(expense, LocalDate.of(2026, 8, 10)))
-        assertFalse(RecurringExpensePolicy.isActiveOn(expense, LocalDate.of(2026, 8, 11)))
-    }
-
-    @Test fun contractDateIsInclusive() {
-        val expense = expense(contractDate = "2026-08-10")
-        assertTrue(RecurringExpensePolicy.isActiveOn(expense, LocalDate.of(2026, 8, 10)))
-        assertFalse(RecurringExpensePolicy.isActiveOn(expense, LocalDate.of(2026, 8, 9)))
-    }
-
-    @Test fun priceRevisionStartsOnEffectiveDate() {
-        val expense = expense(revisions = listOf(PriceRevision("2026-08-10", 1500)))
-        assertEquals(1000, RecurringExpensePolicy.amountOn(expense, LocalDate.of(2026, 8, 9)))
-        assertEquals(1500, RecurringExpensePolicy.amountOn(expense, LocalDate.of(2026, 8, 10)))
-    }
-
-    @Test fun latestRevisionWinsEvenWhenInputIsUnsorted() {
-        val expense = expense(revisions = listOf(PriceRevision("2026-08-01", 1200), PriceRevision("2026-07-01", 1100)))
-        assertEquals(1200, RecurringExpensePolicy.amountOn(expense, LocalDate.of(2026, 8, 10)))
-    }
-
-    @Test fun billingDayUsesLastDayForShortMonth() {
-        assertEquals(LocalDate.of(2026, 2, 28), RecurringExpensePolicy.billingDate(expense(billingDay = 31), YearMonth.of(2026, 2)))
-    }
-
-    private fun expense(contractDate: String = "2026-01-01", endDate: String? = null, billingDay: Int = 10, revisions: List<PriceRevision> = emptyList()) =
-        RecurringExpense(1L, 1000, "固定費", "サービス", billingDay, YearMonth.from(LocalDate.parse(contractDate)).toString(), contractDate, "rakuten", 1, endDate, revisions)
+ @Test fun endDateInclusive(){val e=expense(end="2026-07-10");assertTrue(RecurringExpensePolicy.isActiveOn(e,LocalDate.parse("2026-07-10")));assertFalse(RecurringExpensePolicy.isActiveOn(e,LocalDate.parse("2026-07-11")))}
+ @Test fun contractDateInclusive(){val e=expense(contract="2026-07-10");assertFalse(RecurringExpensePolicy.isActiveOn(e,LocalDate.parse("2026-07-09")));assertTrue(RecurringExpensePolicy.isActiveOn(e,LocalDate.parse("2026-07-10")))}
+ @Test fun revisionStartsOnDate(){val e=expense(revisions=listOf(PriceRevision("2026-07-10",1200L)));assertEquals(1000L,RecurringExpensePolicy.amountOn(e,LocalDate.parse("2026-07-09")));assertEquals(1200L,RecurringExpensePolicy.amountOn(e,LocalDate.parse("2026-07-10")))}
+ @Test fun latestRevisionWinsUnsorted(){val e=expense(revisions=listOf(PriceRevision("2026-08-01",1500L),PriceRevision("2026-07-01",1200L)));assertEquals(1500L,RecurringExpensePolicy.amountOn(e,LocalDate.parse("2026-09-01")))}
+ @Test fun billingDayUsesMonthEnd(){assertEquals(LocalDate.parse("2026-02-28"),RecurringExpensePolicy.billingDate(expense().copy(billingDay=31),java.time.YearMonth.of(2026,2)))}
+ private fun expense(contract:String="2026-01-01",end:String?=null,revisions:List<PriceRevision> = emptyList())=RecurringExpense(id=1,amount=1000L,category="固定費",merchant="Netflix",description="動画",billingDay=10,startMonth="2026-01",contractDate=contract,paymentSourceId="card",endDate=end,priceRevisions=revisions)
 }

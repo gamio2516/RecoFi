@@ -17,8 +17,8 @@ object StatementCsvParser {
         return rows.drop(headerIndex + 1).mapNotNull { row ->
             val match = Regex("(?:(20\\d{2})[./-])?(\\d{1,2})[./-](\\d{1,2})").find(row.getOrNull(dateIndex).orEmpty().trim()) ?: return@mapNotNull null
             val date = runCatching { LocalDate.of(match.groupValues[1].toIntOrNull() ?: targetMonth.year, match.groupValues[2].toInt(), match.groupValues[3].toInt()) }.getOrNull() ?: return@mapNotNull null
-            val amount = row.getOrNull(amountIndex).orEmpty().replace(Regex("[^0-9-]"), "").toIntOrNull()?.let(::abs) ?: return@mapNotNull null
-            if (amount == 0) return@mapNotNull null
+            val amount = row.getOrNull(amountIndex).orEmpty().replace(Regex("[^0-9-]"), "").toLongOrNull()?.let(::abs) ?: return@mapNotNull null
+            if (amount == 0L) return@mapNotNull null
             val merchant = row.getOrNull(merchantIndex).orEmpty().trim().ifBlank { "利用先不明" }
             CardStatementEntry(date, amount, merchant, row.joinToString(" "))
         }.distinctBy { Triple(it.date, it.amount, ReconciliationMatcher.normalizeMerchant(it.merchant)) }

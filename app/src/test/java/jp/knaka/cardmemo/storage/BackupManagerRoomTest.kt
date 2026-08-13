@@ -1,52 +1,16 @@
 package jp.knaka.cardmemo.storage
-
 import android.content.Context
 import androidx.test.core.app.ApplicationProvider
-import jp.knaka.cardmemo.BackupCodec
-import jp.knaka.cardmemo.BackupManager
-import jp.knaka.cardmemo.Transaction
-import jp.knaka.cardmemo.TransactionRepository
-import org.json.JSONArray
-import org.json.JSONObject
-import org.junit.After
-import org.junit.Assert.assertEquals
-import org.junit.Assert.assertTrue
-import org.junit.Before
-import org.junit.Test
+import jp.knaka.cardmemo.*
+import org.junit.*
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
-
 @RunWith(RobolectricTestRunner::class)
 class BackupManagerRoomTest {
-    private lateinit var context: Context
-    @Before fun setup() {
-        context = ApplicationProvider.getApplicationContext(); StorageProvider.resetForTest(); context.deleteDatabase(RecoFiDatabase.DATABASE_NAME)
-        context.getSharedPreferences(StorageBootstrap.LEGACY_PREFERENCES, Context.MODE_PRIVATE).edit().clear().commit()
-        context.filesDir.resolve("restore-safety-backups").deleteRecursively()
-    }
-    @After fun cleanup() { StorageProvider.resetForTest(); context.deleteDatabase(RecoFiDatabase.DATABASE_NAME); context.filesDir.resolve("restore-safety-backups").deleteRecursively() }
-
-    @Test fun restoreCreatesSafetyBackupThenReplacesRoomWithoutTouchingLegacy() {
-        val repository = TransactionRepository(context)
-        repository.save(listOf(Transaction(1, 100, "食料品", "before", 1)))
-        val legacyBefore = context.getSharedPreferences(StorageBootstrap.LEGACY_PREFERENCES, Context.MODE_PRIVATE).all.toMap()
-        val room = (StorageProvider.get(context) as StorageBootstrapResult.RoomReady).database
-        val preferences = RoomBackupAdapter.exportPreferences(room).toMutableMap()
-        preferences["transactions"] = JSONArray().put(JSONObject().put("id", 2).put("amount", 200).put("category", "食料品").put("note", "after").put("usedAt", 2).put("confirmed", false).put("paymentSourceId", "rakuten").put("suggested", false)).toString()
-        val backup = BackupCodec.decodeAndValidate(BackupCodec.encode(preferences, "1.0", "2026-08-13T00:00:00Z"))
-        val safety = BackupManager(context).restore(backup)
-        assertTrue(safety.isFile && safety.length() > 0)
-        assertEquals("after", repository.load().single().note)
-        assertEquals(legacyBefore, context.getSharedPreferences(StorageBootstrap.LEGACY_PREFERENCES, Context.MODE_PRIVATE).all.toMap())
-    }
-
-    @Test fun referentiallyInvalidBackupDoesNotChangeCurrentRoom() {
-        val repository = TransactionRepository(context); repository.save(listOf(Transaction(1, 100, "食料品", "safe", 1)))
-        val room = (StorageProvider.get(context) as StorageBootstrapResult.RoomReady).database
-        val preferences = RoomBackupAdapter.exportPreferences(room).toMutableMap()
-        preferences["transactions"] = JSONArray().put(JSONObject().put("id", 2).put("amount", 200).put("category", "missing").put("note", "bad").put("usedAt", 2).put("confirmed", false).put("paymentSourceId", "rakuten").put("suggested", false)).toString()
-        val backup = BackupCodec.decodeAndValidate(BackupCodec.encode(preferences, "1.0", "2026-08-13T00:00:00Z"))
-        assertTrue(runCatching { BackupManager(context).restore(backup) }.isFailure)
-        assertEquals("safe", repository.load().single().note)
-    }
+ private lateinit var context:Context
+ @Before fun setup(){context=ApplicationProvider.getApplicationContext();StorageProvider.resetForTest();context.deleteDatabase(RecoFiDatabase.DATABASE_NAME);context.filesDir.resolve("restore-safety-backups").deleteRecursively()}
+ @After fun cleanup(){StorageProvider.resetForTest();context.deleteDatabase(RecoFiDatabase.DATABASE_NAME);context.filesDir.resolve("restore-safety-backups").deleteRecursively()}
+ @Test fun restoreCreatesVerifiedSafetyBackupAndReplacesRoom(){val db=StorageProvider.database(context);seed(db);val repo=TransactionRepository(context);repo.save(listOf(Transaction(1,100L,"食料品","before","old",1L)));val target=BackupCodec.decodeAndValidate(BackupCodec.encode(db,"1.0"));val changed=target.copy(snapshot=target.snapshot.copy(transactions=listOf(target.snapshot.transactions.single().copy(id=2,merchant="after",description="new"))));val safety=BackupManager(context).restore(changed);Assert.assertTrue(safety.isFile&&safety.length()>0);Assert.assertEquals("after",repo.load().single().merchant);Assert.assertEquals("new",repo.load().single().description)}
+ @Test fun invalidBackupCannotChangeRoom(){val db=StorageProvider.database(context);seed(db);val repo=TransactionRepository(context);repo.save(listOf(Transaction(1,100L,"食料品","safe","keep",1L)));val valid=BackupCodec.decodeAndValidate(BackupCodec.encode(db,"1.0"));val invalid=valid.copy(snapshot=valid.snapshot.copy(transactions=listOf(valid.snapshot.transactions.single().copy(category="missing"))));Assert.assertTrue(runCatching{BackupManager(context).restore(invalid)}.isFailure);Assert.assertEquals("safe",repo.load().single().merchant)}
+ private fun seed(db:RecoFiDatabase){db.referenceData().upsertPaymentSources(listOf(PaymentSourceEntity("rakuten","楽天カード",true,0)));db.referenceData().upsertCategories(listOf(CategoryEntity("食料品",0)));db.monthlyState().upsertBudgetSettings(AppBudgetSettingsEntity(defaultMonthlyBudget=0L))}
 }
