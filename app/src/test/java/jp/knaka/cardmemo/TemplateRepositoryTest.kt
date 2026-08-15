@@ -18,4 +18,8 @@ class TemplateRepositoryTest {
  @Test fun descriptionAdd(){repository.saveDescriptions(listOf("食料品"));Assert.assertEquals(listOf("食料品"),repository.loadDescriptions())}
  @Test fun descriptionDelete(){repository.saveDescriptions(listOf("食料品","日用品"));repository.saveDescriptions(repository.loadDescriptions()-"食料品");Assert.assertEquals(listOf("日用品"),repository.loadDescriptions())}
  @Test fun descriptionReorder(){repository.saveDescriptions(listOf("食料品","日用品"));repository.saveDescriptions(repository.loadDescriptions().reversed());Assert.assertEquals(listOf("日用品","食料品"),repository.loadDescriptions())}
+ @Test fun sixTemplatesAreAllVisible(){val values=(1..6).map(Int::toString);Assert.assertEquals(values,visibleTemplateValues(values,false))}
+ @Test fun sevenTemplatesInitiallyShowFirstSixInManualOrder(){val values=listOf("C","A","B","D","E","F","G");Assert.assertEquals(values.take(6),visibleTemplateValues(values,false))}
+ @Test fun expandedTemplatesShowAllInManualOrder(){val values=(1..10).map(Int::toString);Assert.assertEquals(values,visibleTemplateValues(values,true))}
+ @Test fun defaultPaymentSourceRoundTripsAndClearsWhenDeleted(){val sources=repository.loadPaymentSources();val chosen=sources.last().id;repository.saveDefaultPaymentSourceId(chosen);Assert.assertEquals(chosen,repository.loadDefaultPaymentSourceId());repository.savePaymentSources(sources.filterNot{it.id==chosen});Assert.assertNull(repository.loadDefaultPaymentSourceId())}
 }

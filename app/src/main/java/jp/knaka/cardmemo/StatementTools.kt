@@ -123,7 +123,7 @@ object StatementTools {
 
     fun writeMonthlyCsv(output: OutputStream, month: YearMonth, transactions: List<Transaction>, sourceNames: Map<String, String>, sourceId: String? = null) {
         val formatter = DateTimeFormatter.ISO_LOCAL_DATE
-        val header = "利用日,支払方法,項目,金額,取引先,内容,固定費"
+        val header = "利用日,支払方法,支出カテゴリ,金額,取引先,内容,固定費"
         val rows = transactions.filter {
             YearMonth.from(Instant.ofEpochMilli(it.usedAt).atZone(ZoneId.systemDefault())) == month
         }.filter { sourceId == null || it.paymentSourceId == sourceId }.sortedBy { it.usedAt }.map { item ->

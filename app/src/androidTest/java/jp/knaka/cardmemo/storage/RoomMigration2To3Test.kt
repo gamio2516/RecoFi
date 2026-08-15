@@ -51,7 +51,7 @@ class RoomMigration2To3Test {
             close()
         }
 
-        val room = Room.databaseBuilder(context, RecoFiDatabase::class.java, name).addMigrations(RecoFiDatabase.MIGRATION_2_3).allowMainThreadQueries().build()
+        val room = Room.databaseBuilder(context, RecoFiDatabase::class.java, name).addMigrations(RecoFiDatabase.MIGRATION_2_3,RecoFiDatabase.MIGRATION_3_4).allowMainThreadQueries().build()
         val migrated = room.openHelper.writableDatabase
         migrated.query("SELECT type FROM payment_sources WHERE id='card'").use { it.moveToFirst(); assertEquals("CREDIT_CARD", it.getString(0)) }
         migrated.query("SELECT type FROM payment_sources WHERE id='cash'").use { it.moveToFirst(); assertEquals("OTHER", it.getString(0)) }
@@ -73,7 +73,7 @@ class RoomMigration2To3Test {
         var uniqueRejected=false;try{migrated.execSQL("UPDATE reconciliation_matches SET transactionId=1,status='CONFIRMED' WHERE statementEntryId=101")}catch(_:Exception){uniqueRejected=true};assertEquals(true,uniqueRejected)
         room.close()
 
-        val reopened=Room.databaseBuilder(context,RecoFiDatabase::class.java,name).addMigrations(RecoFiDatabase.MIGRATION_2_3).allowMainThreadQueries().build()
+        val reopened=Room.databaseBuilder(context,RecoFiDatabase::class.java,name).addMigrations(RecoFiDatabase.MIGRATION_2_3,RecoFiDatabase.MIGRATION_3_4).allowMainThreadQueries().build()
         reopened.openHelper.writableDatabase.query("SELECT COUNT(*) FROM transactions").use { it.moveToFirst();assertEquals(2,it.getInt(0)) }
         reopened.close()
     }

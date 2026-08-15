@@ -145,6 +145,10 @@ data class MonthlyLockEntity(@PrimaryKey val month: String, val lockedAt: Long)
 data class MonthlyBudgetEntity(@PrimaryKey val month: String, val amount: Long)
 
 @Entity(tableName = "app_budget_settings")
-data class AppBudgetSettingsEntity(@PrimaryKey val id: Int = SINGLETON_ID, val defaultMonthlyBudget: Long) {
+data class AppBudgetSettingsEntity(
+    @PrimaryKey val id: Int = SINGLETON_ID,
+    val defaultMonthlyBudget: Long,
+    val defaultPaymentSourceId: String? = null,
+) {
     companion object { const val SINGLETON_ID = 1 }
 }

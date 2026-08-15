@@ -8,7 +8,7 @@ data class Transaction(
     val description: String,
     val usedAt: Long,
     val recurringId: Long? = null,
-    val paymentSourceId: String = "rakuten",
+    val paymentSourceId: String = "",
 )
 
 data class RecurringExpense(
@@ -20,7 +20,7 @@ data class RecurringExpense(
     val billingDay: Int,
     val startMonth: String,
     val contractDate: String,
-    val paymentSourceId: String = "rakuten",
+    val paymentSourceId: String = "",
     val intervalMonths: Int = 1,
     val endDate: String? = null,
     val priceRevisions: List<PriceRevision> = emptyList(),

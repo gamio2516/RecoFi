@@ -16,7 +16,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         MonthlyLockEntity::class, MonthlyBudgetEntity::class,
         AppBudgetSettingsEntity::class,
     ],
-    version = 3,
+    version = 4,
     exportSchema = true,
 )
 abstract class RecoFiDatabase : RoomDatabase() {
@@ -46,9 +46,14 @@ abstract class RecoFiDatabase : RoomDatabase() {
             db.execSQL("CREATE TABLE monthly_payment_source_declarations (month TEXT NOT NULL, paymentSourceId TEXT NOT NULL, status TEXT NOT NULL, updatedAt INTEGER NOT NULL, PRIMARY KEY(month,paymentSourceId), FOREIGN KEY(paymentSourceId) REFERENCES payment_sources(id) ON DELETE CASCADE)");db.execSQL("CREATE INDEX index_monthly_payment_source_declarations_paymentSourceId ON monthly_payment_source_declarations(paymentSourceId)")
             db.execSQL("DELETE FROM monthly_locks")
         }}
+        val MIGRATION_3_4 = object : Migration(3, 4) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE app_budget_settings ADD COLUMN defaultPaymentSourceId TEXT")
+            }
+        }
         fun open(context: Context): RecoFiDatabase = Room.databaseBuilder(context, RecoFiDatabase::class.java, DATABASE_NAME)
             .allowMainThreadQueries()
-            .addMigrations(MIGRATION_2_3)
+            .addMigrations(MIGRATION_2_3, MIGRATION_3_4)
             .build()
     }
 }

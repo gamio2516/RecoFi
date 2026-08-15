@@ -31,6 +31,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     val defaultMonthlyBudget = _defaultMonthlyBudget.asStateFlow()
     private val _paymentSources = MutableStateFlow(initialSources)
     val paymentSources = _paymentSources.asStateFlow()
+    private val _defaultPaymentSourceId = MutableStateFlow(settingsRepository.loadDefaultPaymentSourceId())
+    val defaultPaymentSourceId = _defaultPaymentSourceId.asStateFlow()
     private val _lockedMonths = MutableStateFlow(settingsRepository.loadLockedMonths())
     val lockedMonths = _lockedMonths.asStateFlow()
     private val _importedFileHashes = MutableStateFlow(settingsRepository.loadImportedFileHashes())
@@ -119,7 +121,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun addPaymentSource(name: String,type:PaymentSourceType=PaymentSourceType.OTHER) { val clean = name.trim(); if (clean.isNotEmpty() && _paymentSources.value.none { it.name == clean }) { val source = PaymentSource("source_${System.currentTimeMillis()}", clean, type); _paymentSources.value += source; settingsRepository.savePaymentSources(_paymentSources.value) } }
     fun editPaymentSource(id:String,name:String,type:PaymentSourceType){_paymentSources.value=_paymentSources.value.map{if(it.id==id)it.copy(name=name.trim(),type=type)else it};settingsRepository.savePaymentSources(_paymentSources.value)}
-    fun deletePaymentSource(id: String) { if (_paymentSources.value.size > 1 && _transactions.value.none { it.paymentSourceId == id } && _recurringExpenses.value.none { it.paymentSourceId == id }) { _paymentSources.value = _paymentSources.value.filterNot { it.id == id }; settingsRepository.savePaymentSources(_paymentSources.value) } }
+    fun setDefaultPaymentSource(id:String){if(_paymentSources.value.any{it.id==id}){_defaultPaymentSourceId.value=id;settingsRepository.saveDefaultPaymentSourceId(id)}}
+    fun deletePaymentSource(id: String) { if (_paymentSources.value.size > 1 && _transactions.value.none { it.paymentSourceId == id } && _recurringExpenses.value.none { it.paymentSourceId == id }) { _paymentSources.value = _paymentSources.value.filterNot { it.id == id }; settingsRepository.savePaymentSources(_paymentSources.value);if(_defaultPaymentSourceId.value==id)_defaultPaymentSourceId.value=null } }
 
     fun saveRecurringExpense(id: Long?, amount: Long, billingDay: Int, category: String, merchant: String, description: String, contractDate: LocalDate, paymentSourceId: String, intervalMonths: Int) {
         val previous = _recurringExpenses.value.firstOrNull { it.id == id }
