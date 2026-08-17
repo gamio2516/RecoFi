@@ -6,7 +6,7 @@ import java.time.temporal.ChronoUnit
 
 object RecurringExpensePolicy {
     fun billingDate(expense: RecurringExpense, month: YearMonth): LocalDate =
-        month.atDay(expense.billingDay.coerceAtMost(month.lengthOfMonth()))
+        month.atDay(expense.paymentDay.coerceAtMost(month.lengthOfMonth()))
 
     fun isActiveOn(expense: RecurringExpense, date: LocalDate): Boolean =
         !date.isBefore(LocalDate.parse(expense.contractDate)) &&

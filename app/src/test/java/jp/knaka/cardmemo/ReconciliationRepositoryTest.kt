@@ -25,17 +25,17 @@ class ReconciliationRepositoryTest {
         db = Room.inMemoryDatabaseBuilder(ApplicationProvider.getApplicationContext<Context>(), RecoFiDatabase::class.java).allowMainThreadQueries().build()
         repository = ReconciliationRepository(db, true)
         db.referenceData().upsertPaymentSources(listOf(PaymentSourceEntity("card", "楽天カード", "CREDIT_CARD", 0)))
-        db.referenceData().upsertCategories(listOf(CategoryEntity("外食", 0)))
+        db.referenceData().upsertCategories(listOf(CategoryEntity("dining","外食", 0)))
         db.statements().upsertStatements(listOf(ImportedStatementEntity("hash", month.toString(), "card", "statement.csv")))
         db.statements().upsertEntries(listOf(StatementEntryEntity(101, "hash", 0, "2026-08-10", 1200, "STARBUCKS", "raw")))
     }
     @After fun close() = db.close()
 
-    private fun tx(id: Long = 1, merchant: String = "スターバックス") = Transaction(id, 1200, "外食", merchant, "コーヒー", usedAt, paymentSourceId = "card")
-    private fun persist(vararg items: Transaction) = db.transactions().upsertAll(items.map { TransactionEntity(it.id,it.amount,it.category,it.merchant,it.description,it.usedAt,it.recurringId,it.paymentSourceId) })
+    private fun tx(id: Long = 1, merchant: String = "スターバックス") = Transaction(id, 1200, "外食", merchant, "コーヒー", usedAt, paymentSourceId = "card", categoryId = "dining")
+    private fun persist(vararg items: Transaction) = db.transactions().upsertAll(items.map { TransactionEntity(it.id,it.amount,"dining",it.merchant,it.description,it.usedAt,it.recurringId,it.paymentSourceId) })
 
     @Test fun `match relation is persisted and loaded`() {
-        db.transactions().upsertAll(listOf(TransactionEntity(1, 1200, "外食", "スターバックス", "コーヒー", usedAt, null, "card")))
+        db.transactions().upsertAll(listOf(TransactionEntity(1, 1200, "dining", "スターバックス", "コーヒー", usedAt, null, "card")))
         repository.confirm(101, 1)
         val restored = ReconciliationRepository(db, true).reviewRows("hash").single()
         assertEquals(ReconciliationStatus.CONFIRMED.name, restored.match?.status)
@@ -54,7 +54,7 @@ class ReconciliationRepositoryTest {
     }
 
     @Test fun `confirmed user match survives automatic rerun`() {
-        db.transactions().upsertAll(listOf(TransactionEntity(1, 1200, "外食", "手動選択", "", usedAt, null, "card")))
+        db.transactions().upsertAll(listOf(TransactionEntity(1, 1200, "dining", "手動選択", "", usedAt, null, "card")))
         repository.confirm(101, 1)
         persist(tx(2)); repository.autoMatch("hash", "card", listOf(tx(2)))
         val match = db.reconciliation().loadMatch(101)!!
@@ -72,7 +72,7 @@ class ReconciliationRepositoryTest {
     }
 
     @Test fun `manual confirmation changes derived progress`() {
-        db.transactions().upsertAll(listOf(TransactionEntity(1, 1200, "外食", "スターバックス", "", usedAt, null, "card")))
+        db.transactions().upsertAll(listOf(TransactionEntity(1, 1200, "dining", "スターバックス", "", usedAt, null, "card")))
         repository.autoMatch("hash", "card", listOf(tx()))
         assertEquals(1, repository.progress(month, "card").needsReview)
         repository.confirm(101, 1)

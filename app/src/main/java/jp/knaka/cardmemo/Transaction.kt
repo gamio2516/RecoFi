@@ -9,6 +9,7 @@ data class Transaction(
     val usedAt: Long,
     val recurringId: Long? = null,
     val paymentSourceId: String = "",
+    val categoryId: String = stableCategoryId(category),
 )
 
 data class RecurringExpense(
@@ -17,14 +18,19 @@ data class RecurringExpense(
     val category: String,
     val merchant: String,
     val description: String,
-    val billingDay: Int,
+    val paymentDay: Int,
     val startMonth: String,
     val contractDate: String,
     val paymentSourceId: String = "",
     val intervalMonths: Int = 1,
     val endDate: String? = null,
     val priceRevisions: List<PriceRevision> = emptyList(),
+    val categoryId: String = stableCategoryId(category),
 )
+
+data class Category(val id: String, val name: String, val sortOrder: Int)
+
+fun stableCategoryId(name: String): String = "category_" + name.toByteArray(Charsets.UTF_8).joinToString("") { "%02x".format(it) }
 
 data class PriceRevision(val effectiveDate: String, val amount: Long)
 

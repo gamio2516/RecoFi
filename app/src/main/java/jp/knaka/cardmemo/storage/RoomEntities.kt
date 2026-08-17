@@ -9,7 +9,7 @@ import androidx.room.PrimaryKey
 data class PaymentSourceEntity(@PrimaryKey val id: String, val name: String, val type: String, val sortOrder: Int, val isCard: Boolean = type == "CREDIT_CARD")
 
 @Entity(tableName = "categories", indices = [Index(value = ["name"], unique = true)])
-data class CategoryEntity(@PrimaryKey val name: String, val sortOrder: Int)
+data class CategoryEntity(@PrimaryKey val id: String, val name: String, val sortOrder: Int)
 
 @Entity(tableName = "merchant_templates")
 data class MerchantTemplateEntity(@PrimaryKey val value: String, val sortOrder: Int)
@@ -20,18 +20,18 @@ data class DescriptionTemplateEntity(@PrimaryKey val value: String, val sortOrde
 @Entity(
     tableName = "recurring_expenses",
     foreignKeys = [
-        ForeignKey(entity = CategoryEntity::class, parentColumns = ["name"], childColumns = ["category"], onDelete = ForeignKey.RESTRICT),
+        ForeignKey(entity = CategoryEntity::class, parentColumns = ["id"], childColumns = ["categoryId"], onDelete = ForeignKey.RESTRICT),
         ForeignKey(entity = PaymentSourceEntity::class, parentColumns = ["id"], childColumns = ["paymentSourceId"], onDelete = ForeignKey.RESTRICT),
     ],
-    indices = [Index("category"), Index("paymentSourceId")],
+    indices = [Index("categoryId"), Index("paymentSourceId")],
 )
 data class RecurringExpenseEntity(
     @PrimaryKey val id: Long,
     val amount: Long,
-    val category: String,
+    val categoryId: String,
     val merchant: String,
     val description: String,
-    val billingDay: Int,
+    val paymentDay: Int,
     val startMonth: String,
     val contractDate: String,
     val paymentSourceId: String,
@@ -50,16 +50,16 @@ data class RecurringPriceRevisionEntity(val recurringId: Long, val effectiveDate
 @Entity(
     tableName = "transactions",
     foreignKeys = [
-        ForeignKey(entity = CategoryEntity::class, parentColumns = ["name"], childColumns = ["category"], onDelete = ForeignKey.RESTRICT),
+        ForeignKey(entity = CategoryEntity::class, parentColumns = ["id"], childColumns = ["categoryId"], onDelete = ForeignKey.RESTRICT),
         ForeignKey(entity = PaymentSourceEntity::class, parentColumns = ["id"], childColumns = ["paymentSourceId"], onDelete = ForeignKey.RESTRICT),
         ForeignKey(entity = RecurringExpenseEntity::class, parentColumns = ["id"], childColumns = ["recurringId"], onDelete = ForeignKey.SET_NULL),
     ],
-    indices = [Index("category"), Index("paymentSourceId"), Index("recurringId"), Index("usedAt")],
+    indices = [Index("categoryId"), Index("paymentSourceId"), Index("recurringId"), Index("usedAt")],
 )
 data class TransactionEntity(
     @PrimaryKey val id: Long,
     val amount: Long,
-    val category: String,
+    val categoryId: String,
     val merchant: String,
     val description: String,
     val usedAt: Long,

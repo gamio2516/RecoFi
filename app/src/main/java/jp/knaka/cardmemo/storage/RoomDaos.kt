@@ -25,7 +25,7 @@ import androidx.room.Upsert
     @Query("DELETE FROM description_templates") fun deleteDescriptions()
     @Query("DELETE FROM categories") fun deleteCategories()
     @Query("DELETE FROM payment_sources") fun deletePaymentSources()
-    @Query("DELETE FROM categories WHERE name = :name") fun deleteCategory(name: String)
+    @Query("DELETE FROM categories WHERE id = :id") fun deleteCategory(id: String)
     @Query("DELETE FROM payment_sources WHERE id = :id") fun deletePaymentSource(id: String)
 }
 

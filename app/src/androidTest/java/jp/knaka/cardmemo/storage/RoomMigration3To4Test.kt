@@ -37,14 +37,14 @@ class RoomMigration3To4Test {
         return SQLiteDatabase.openDatabase(context.getDatabasePath(name).path, null, SQLiteDatabase.OPEN_READWRITE)
     }
 
-    @Test fun migratesV3SettingsAndCanReopenV4() {
+    @Test fun migratesV3SettingsThroughV5AndCanReopen() {
         createV3().close()
-        val room = Room.databaseBuilder(context, RecoFiDatabase::class.java, name).addMigrations(RecoFiDatabase.MIGRATION_3_4).allowMainThreadQueries().build()
+        val room = Room.databaseBuilder(context, RecoFiDatabase::class.java, name).addMigrations(RecoFiDatabase.MIGRATION_3_4,RecoFiDatabase.MIGRATION_4_5).allowMainThreadQueries().build()
         assertEquals(250000L, room.monthlyState().loadBudgetSettings()!!.defaultMonthlyBudget)
         assertNull(room.monthlyState().loadBudgetSettings()!!.defaultPaymentSourceId)
         room.monthlyState().upsertBudgetSettings(AppBudgetSettingsEntity(defaultMonthlyBudget=250000, defaultPaymentSourceId="card"))
         room.close()
-        val reopened = Room.databaseBuilder(context, RecoFiDatabase::class.java, name).addMigrations(RecoFiDatabase.MIGRATION_3_4).allowMainThreadQueries().build()
+        val reopened = Room.databaseBuilder(context, RecoFiDatabase::class.java, name).addMigrations(RecoFiDatabase.MIGRATION_3_4,RecoFiDatabase.MIGRATION_4_5).allowMainThreadQueries().build()
         assertEquals("card", reopened.monthlyState().loadBudgetSettings()!!.defaultPaymentSourceId)
         reopened.close()
     }

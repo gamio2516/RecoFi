@@ -23,6 +23,7 @@ object RecurringTransactionGenerator {
             id = idProvider(), amount = amount, category = expense.category, merchant = expense.merchant, description = expense.description,
             usedAt = billingDate.atStartOfDay(zoneId).toInstant().toEpochMilli(), recurringId = expense.id,
             paymentSourceId = expense.paymentSourceId,
+            categoryId = expense.categoryId,
         )
     }
 }

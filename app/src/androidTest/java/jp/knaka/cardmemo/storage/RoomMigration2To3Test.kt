@@ -51,7 +51,7 @@ class RoomMigration2To3Test {
             close()
         }
 
-        val room = Room.databaseBuilder(context, RecoFiDatabase::class.java, name).addMigrations(RecoFiDatabase.MIGRATION_2_3,RecoFiDatabase.MIGRATION_3_4).allowMainThreadQueries().build()
+        val room = Room.databaseBuilder(context, RecoFiDatabase::class.java, name).addMigrations(RecoFiDatabase.MIGRATION_2_3,RecoFiDatabase.MIGRATION_3_4,RecoFiDatabase.MIGRATION_4_5).allowMainThreadQueries().build()
         val migrated = room.openHelper.writableDatabase
         migrated.query("SELECT type FROM payment_sources WHERE id='card'").use { it.moveToFirst(); assertEquals("CREDIT_CARD", it.getString(0)) }
         migrated.query("SELECT type FROM payment_sources WHERE id='cash'").use { it.moveToFirst(); assertEquals("OTHER", it.getString(0)) }
@@ -66,14 +66,15 @@ class RoomMigration2To3Test {
         migrated.query("SELECT defaultMonthlyBudget FROM app_budget_settings WHERE id=1").use { it.moveToFirst();assertEquals(250000,it.getInt(0)) }
         migrated.query("SELECT COUNT(*) FROM monthly_locks").use { it.moveToFirst();assertEquals(0,it.getInt(0)) }
         migrated.query("PRAGMA foreign_key_list(reconciliation_matches)").use { cursor -> var count=0;while(cursor.moveToNext())count++;assertEquals(2,count) }
-        migrated.execSQL("INSERT INTO transactions(id,amount,category,merchant,description,usedAt,recurringId,paymentSourceId) VALUES(2,500,'外食','別候補','',0,NULL,'card')")
+        val categoryId=jp.knaka.cardmemo.stableCategoryId("外食")
+        migrated.execSQL("INSERT INTO transactions(id,amount,categoryId,merchant,description,usedAt,recurringId,paymentSourceId) VALUES(2,500,'$categoryId','別候補','',0,NULL,'card')")
         migrated.execSQL("UPDATE reconciliation_matches SET transactionId=1,status='CONFIRMED' WHERE statementEntryId=100")
         migrated.execSQL("INSERT INTO statement_entries(id,fileHash,rowOrder,date,amount,merchant,rawText) VALUES(101,'hash',1,'2026-08-11',500,'STARBUCKS','raw2')")
         migrated.execSQL("INSERT INTO reconciliation_matches(statementEntryId,transactionId,status,createdAt,updatedAt) VALUES(101,NULL,'PENDING',0,0)")
         var uniqueRejected=false;try{migrated.execSQL("UPDATE reconciliation_matches SET transactionId=1,status='CONFIRMED' WHERE statementEntryId=101")}catch(_:Exception){uniqueRejected=true};assertEquals(true,uniqueRejected)
         room.close()
 
-        val reopened=Room.databaseBuilder(context,RecoFiDatabase::class.java,name).addMigrations(RecoFiDatabase.MIGRATION_2_3,RecoFiDatabase.MIGRATION_3_4).allowMainThreadQueries().build()
+        val reopened=Room.databaseBuilder(context,RecoFiDatabase::class.java,name).addMigrations(RecoFiDatabase.MIGRATION_2_3,RecoFiDatabase.MIGRATION_3_4,RecoFiDatabase.MIGRATION_4_5).allowMainThreadQueries().build()
         reopened.openHelper.writableDatabase.query("SELECT COUNT(*) FROM transactions").use { it.moveToFirst();assertEquals(2,it.getInt(0)) }
         reopened.close()
     }

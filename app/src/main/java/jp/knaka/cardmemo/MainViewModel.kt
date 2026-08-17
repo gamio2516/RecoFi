@@ -47,7 +47,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun addTransaction(amount: Long, category: String, merchant: String, description: String, usedAt: Long, paymentSourceId: String, id: Long? = null) {
         val month=YearMonth.from(Instant.ofEpochMilli(usedAt).atZone(ZoneId.systemDefault()));if(month.toString() in _lockedMonths.value)return
-        val item = Transaction(id ?: System.currentTimeMillis(), amount, category, merchant, description, usedAt, recurringId=_transactions.value.firstOrNull{it.id==id}?.recurringId, paymentSourceId = paymentSourceId)
+        val old=_transactions.value.firstOrNull{it.id==id};val item = Transaction(id ?: System.currentTimeMillis(), amount, category, merchant, description, usedAt, recurringId=old?.recurringId, paymentSourceId = paymentSourceId,categoryId=if(old != null && old.category==category)old.categoryId else settingsRepository.categoryId(category))
         updateTransactions(if (id == null) _transactions.value + item else _transactions.value.map { if (it.id == id) item else it })
     }
 
@@ -70,7 +70,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun runAutoReconciliation(fileHash:String,sourceId:String,month:YearMonth){if(month.toString() in _lockedMonths.value)return;reconciliationRepository.autoMatch(fileHash,sourceId,_transactions.value);refreshReconciliation()}
     fun confirmMatch(entryId:Long,transactionId:Long){reconciliationRepository.confirm(entryId,transactionId);refreshReconciliation()}
     fun rejectMatch(entryId:Long,transactionId:Long){reconciliationRepository.reject(entryId,transactionId);refreshReconciliation()}
-    fun createMissingAndConfirm(entryId:Long,amount:Long,category:String,merchant:String,description:String,usedAt:Long,sourceId:String){val month=YearMonth.from(Instant.ofEpochMilli(usedAt).atZone(ZoneId.systemDefault()));if(month.toString() in _lockedMonths.value)return;val tx=Transaction(System.nanoTime(),amount,category,merchant,description,usedAt,paymentSourceId=sourceId);reconciliationRepository.createAndConfirm(entryId,tx);_transactions.value=transactionRepository.load();refreshReconciliation()}
+    fun createMissingAndConfirm(entryId:Long,amount:Long,category:String,merchant:String,description:String,usedAt:Long,sourceId:String){val month=YearMonth.from(Instant.ofEpochMilli(usedAt).atZone(ZoneId.systemDefault()));if(month.toString() in _lockedMonths.value)return;val tx=Transaction(System.nanoTime(),amount,category,merchant,description,usedAt,paymentSourceId=sourceId,categoryId=settingsRepository.categoryId(category));reconciliationRepository.createAndConfirm(entryId,tx);_transactions.value=transactionRepository.load();refreshReconciliation()}
     fun isImportedFile(hash: String): Boolean = hash in _importedFileHashes.value
     fun recordImportedFile(hash: String) {
         _importedFileHashes.value = _importedFileHashes.value + hash
@@ -106,15 +106,21 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         if(statementMonth.toString() in _lockedMonths.value)return;val statement=_importedStatements.value.firstOrNull{it.statementMonth==statementMonth.toString()&&it.paymentSourceId==sourceId}?:return;reconciliationRepository.autoMatch(statement.fileHash,sourceId,_transactions.value);refreshReconciliation()
     }
 
-    fun addCategory(value: String) { val clean = value.trim(); if (_categories.value.size < 15 && clean.isNotEmpty() && clean !in _categories.value) { _categories.value += clean; settingsRepository.saveCategories(_categories.value) } }
-    fun deleteCategory(value: String) { if (_categories.value.size > 1) { _categories.value -= value; settingsRepository.saveCategories(_categories.value) } }
+    fun addCategory(value: String) { val clean = value.trim(); if (canAddManagedValue(_categories.value,clean)) { _categories.value += clean; settingsRepository.saveCategories(_categories.value) } }
+    fun deleteCategory(value: String) { if (_categories.value.size > 1 && _transactions.value.none{it.category==value} && _recurringExpenses.value.none{it.category==value}) { _categories.value -= value; settingsRepository.saveCategories(_categories.value) } }
     fun moveCategory(value: String, offset: Int) { val index = _categories.value.indexOf(value); val target = index + offset; if (index >= 0 && target in _categories.value.indices) { val updated = _categories.value.toMutableList(); val moved = updated.removeAt(index); updated.add(target, moved); _categories.value = updated; settingsRepository.saveCategories(updated) } }
+    fun reorderCategories(items:List<String>){if(items.toSet()==_categories.value.toSet()){_categories.value=items;settingsRepository.saveCategories(items)}}
+    fun renameCategory(old:String,new:String):String?=runCatching{settingsRepository.renameCategory(old,new);val clean=new.trim();_categories.value=_categories.value.map{if(it==old)clean else it};_transactions.value=_transactions.value.map{if(it.category==old)it.copy(category=clean)else it};_recurringExpenses.value=_recurringExpenses.value.map{if(it.category==old)it.copy(category=clean)else it};null}.getOrElse{it.message?:"変更できませんでした"}
     fun addMerchant(value:String)=addTemplate(_merchantTemplates,value,settingsRepository::saveMerchants)
     fun deleteMerchant(value:String){_merchantTemplates.value-=value;settingsRepository.saveMerchants(_merchantTemplates.value)}
     fun moveMerchant(value:String,offset:Int)=moveTemplate(_merchantTemplates,value,offset,settingsRepository::saveMerchants)
+    fun reorderMerchants(items:List<String>)=reorderTemplate(_merchantTemplates,items,settingsRepository::saveMerchants)
+    fun renameMerchant(old:String,new:String):String?=renameTemplate(_merchantTemplates,old,new,settingsRepository::renameMerchant)
     fun addDescription(value:String)=addTemplate(_descriptionTemplates,value,settingsRepository::saveDescriptions)
     fun deleteDescription(value:String){_descriptionTemplates.value-=value;settingsRepository.saveDescriptions(_descriptionTemplates.value)}
     fun moveDescription(value:String,offset:Int)=moveTemplate(_descriptionTemplates,value,offset,settingsRepository::saveDescriptions)
+    fun reorderDescriptions(items:List<String>)=reorderTemplate(_descriptionTemplates,items,settingsRepository::saveDescriptions)
+    fun renameDescription(old:String,new:String):String?=renameTemplate(_descriptionTemplates,old,new,settingsRepository::renameDescription)
 
     fun setMonthlyBudget(month: YearMonth, amount: Long) { val clean = amount.coerceAtLeast(0); _monthlyBudget.value = if (clean == 0L) _monthlyBudget.value - month.toString() else _monthlyBudget.value + (month.toString() to clean); settingsRepository.saveMonthlyBudgets(_monthlyBudget.value) }
     fun setDefaultMonthlyBudget(amount: Long) { _defaultMonthlyBudget.value = amount.coerceAtLeast(0); settingsRepository.saveDefaultMonthlyBudget(_defaultMonthlyBudget.value) }
@@ -124,9 +130,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun setDefaultPaymentSource(id:String){if(_paymentSources.value.any{it.id==id}){_defaultPaymentSourceId.value=id;settingsRepository.saveDefaultPaymentSourceId(id)}}
     fun deletePaymentSource(id: String) { if (_paymentSources.value.size > 1 && _transactions.value.none { it.paymentSourceId == id } && _recurringExpenses.value.none { it.paymentSourceId == id }) { _paymentSources.value = _paymentSources.value.filterNot { it.id == id }; settingsRepository.savePaymentSources(_paymentSources.value);if(_defaultPaymentSourceId.value==id)_defaultPaymentSourceId.value=null } }
 
-    fun saveRecurringExpense(id: Long?, amount: Long, billingDay: Int, category: String, merchant: String, description: String, contractDate: LocalDate, paymentSourceId: String, intervalMonths: Int) {
+    fun saveRecurringExpense(id: Long?, amount: Long, paymentDay: Int, category: String, merchant: String, description: String, contractDate: LocalDate, paymentSourceId: String, intervalMonths: Int) {
         val previous = _recurringExpenses.value.firstOrNull { it.id == id }
-        val item = RecurringExpense(id ?: System.currentTimeMillis(), amount, category, merchant.trim(), description.trim(), billingDay.coerceIn(1, 31), YearMonth.from(contractDate).toString(), contractDate.toString(), paymentSourceId, intervalMonths.coerceAtLeast(1), previous?.endDate, previous?.priceRevisions.orEmpty())
+        val item = RecurringExpense(id ?: System.currentTimeMillis(), amount, category, merchant.trim(), description.trim(), paymentDay.coerceIn(1, 31), YearMonth.from(contractDate).toString(), contractDate.toString(), paymentSourceId, intervalMonths.coerceAtLeast(1), previous?.endDate, previous?.priceRevisions.orEmpty(),if(previous != null && previous.category==category)previous.categoryId else settingsRepository.categoryId(category))
         _recurringExpenses.value = if (id == null) _recurringExpenses.value + item else _recurringExpenses.value.map { if (it.id == id) item else it }
         settingsRepository.saveRecurringExpenses(_recurringExpenses.value)
         if (id != null) updateTransactions(_transactions.value.filterNot { it.recurringId == id && it.yearMonth() >= YearMonth.now() && it.yearMonth().toString() !in _lockedMonths.value })
@@ -172,6 +178,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private fun normalizeMerchant(value: String) = value.lowercase().filter { it.isLetterOrDigit() }
     private fun updateTransactions(items: List<Transaction>) { _transactions.value = items.sortedByDescending { it.usedAt }; transactionRepository.save(_transactions.value) }
     private fun refreshReconciliation(){val db=StorageProvider.database(getApplication());val matches=db.reconciliation().loadMatches();_confirmedTransactionIds.value=matches.filter{it.status==ReconciliationStatus.CONFIRMED.name}.mapNotNull{it.transactionId}.toSet();_suggestedTransactionIds.value=matches.filter{it.status==ReconciliationStatus.SUGGESTED.name}.mapNotNull{it.transactionId}.toSet();_reconciliationProgress.value=_importedStatements.value.filter{it.paymentSourceId.isNotBlank()}.associate{val m=YearMonth.parse(it.statementMonth);val p=reconciliationRepository.progress(m,it.paymentSourceId);"$m|${it.paymentSourceId}" to ReconciliationProgress(p.imported,p.confirmed+p.needsReview,p.needsReview,p.confirmed)}}
-    private fun addTemplate(flow:MutableStateFlow<List<String>>,value:String,save:(List<String>)->Unit){val clean=value.trim();if(flow.value.size<15&&clean.isNotEmpty()&&clean !in flow.value){flow.value+=clean;save(flow.value)}}
+    private fun addTemplate(flow:MutableStateFlow<List<String>>,value:String,save:(List<String>)->Unit){val clean=value.trim();if(canAddManagedValue(flow.value,clean)){flow.value+=clean;save(flow.value)}}
     private fun moveTemplate(flow:MutableStateFlow<List<String>>,value:String,offset:Int,save:(List<String>)->Unit){val i=flow.value.indexOf(value);val target=i+offset;if(i>=0&&target in flow.value.indices){val list=flow.value.toMutableList();val moved=list.removeAt(i);list.add(target,moved);flow.value=list;save(list)}}
+    private fun reorderTemplate(flow:MutableStateFlow<List<String>>,items:List<String>,save:(List<String>)->Unit){if(items.toSet()==flow.value.toSet()){flow.value=items;save(items)}}
+    private fun renameTemplate(flow:MutableStateFlow<List<String>>,old:String,new:String,rename:(String,String)->Unit):String?=runCatching{rename(old,new);val clean=new.trim();flow.value=flow.value.map{if(it==old)clean else it};null}.getOrElse{it.message?:"変更できませんでした"}
 }

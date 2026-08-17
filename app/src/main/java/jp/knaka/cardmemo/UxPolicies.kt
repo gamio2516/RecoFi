@@ -1,5 +1,15 @@
 package jp.knaka.cardmemo
 
+const val USER_MANAGED_LIST_LIMIT = 20
+internal fun canAddManagedValue(values:List<String>,value:String)=values.size<USER_MANAGED_LIST_LIMIT&&value.trim().isNotEmpty()&&value.trim() !in values
+
+internal fun <T> moveItem(values:List<T>,from:Int,to:Int):List<T>{
+    if(from !in values.indices || to !in values.indices || from==to)return values
+    return values.toMutableList().apply{add(to,removeAt(from))}
+}
+internal fun datePickerMillis(date:java.time.LocalDate)=date.toEpochDay()*86_400_000L
+internal fun dateFromPickerMillis(millis:Long)=java.time.LocalDate.ofEpochDay(millis/86_400_000L)
+
 internal fun resolveInitialPaymentSourceId(
     sources: List<PaymentSource>,
     defaultPaymentSourceId: String?,
