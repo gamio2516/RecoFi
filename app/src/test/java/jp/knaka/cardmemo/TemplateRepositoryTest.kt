@@ -26,4 +26,11 @@ class TemplateRepositoryTest {
  @Test fun categoryRenameKeepsStableIdAndReferences(){val old="食料品";val id=repository.categoryId(old);val source=repository.loadPaymentSources().first().id;TransactionRepository(context).save(listOf(Transaction(1,100,old,"西友","野菜",1,paymentSourceId=source,categoryId=id)));repository.saveRecurringExpenses(listOf(RecurringExpense(2,1000,old,"宅配","定期便",10,"2026-01","2026-01-01",source,categoryId=id)));repository.renameCategory(old,"食費");val db=StorageProvider.database(context);Assert.assertEquals(id,db.referenceData().loadCategories().first{it.name=="食費"}.id);Assert.assertEquals(id,db.transactions().loadAll().single().categoryId);Assert.assertEquals(id,db.recurringExpenses().loadAll().single().categoryId)}
  @Test fun duplicateRenameIsRejected(){repository.saveMerchants(listOf("A","B"));Assert.assertTrue(runCatching{repository.renameMerchant("A","B")}.isFailure)}
  @Test fun reorderedCategorySortOrderIsRenumberedAndReloaded(){repository.saveCategories(listOf("その他","外食","食料品"));val rows=StorageProvider.database(context).referenceData().loadCategories();Assert.assertEquals(listOf(0,1,2),rows.map{it.sortOrder});Assert.assertEquals(listOf("その他","外食","食料品"),repository.loadCategories())}
+ @Test fun allManagedListsPersistLongDistanceReorderAndRenumberSortOrder(){
+  val original=listOf("A","B","C","D");val firstToLast=moveItem(original,0,3);val lastToFirst=moveItem(original,3,0)
+  repository.saveCategories(firstToLast);repository.saveMerchants(lastToFirst);repository.saveDescriptions(firstToLast)
+  val dao=StorageProvider.database(context).referenceData()
+  Assert.assertEquals(firstToLast,repository.loadCategories());Assert.assertEquals(lastToFirst,repository.loadMerchants());Assert.assertEquals(firstToLast,repository.loadDescriptions())
+  Assert.assertEquals(listOf(0,1,2,3),dao.loadCategories().map{it.sortOrder});Assert.assertEquals(listOf(0,1,2,3),dao.loadMerchants().map{it.sortOrder});Assert.assertEquals(listOf(0,1,2,3),dao.loadDescriptions().map{it.sortOrder})
+ }
 }

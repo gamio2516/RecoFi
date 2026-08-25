@@ -12,6 +12,7 @@ import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
+import androidx.compose.foundation.gestures.scrollBy
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -34,6 +35,7 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.TextStyle
@@ -41,6 +43,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.zIndex
 import androidx.compose.ui.platform.LocalContext
 import androidx.lifecycle.viewmodel.compose.viewModel
 import java.text.NumberFormat
@@ -243,11 +246,12 @@ internal fun CardMemoApp(vm: MainViewModel = viewModel()) {
 
 @Composable private fun SettingsScreen(categories: List<String>, merchants: List<String>, descriptions: List<String>, recurring: List<RecurringExpense>, budgets: Map<String, Long>, defaultBudget: Long, sources: List<PaymentSource>, defaultSourceId:String?, transactions: List<Transaction>, importedStatements: List<ImportedStatement>, lockedMonths: Set<String>, reconciliationProgress: Map<String, ReconciliationProgress>, initialPage:SettingsPage?, vm: MainViewModel) {
     var page by remember(initialPage) { mutableStateOf(initialPage?:SettingsPage.MENU) }
+    val menuListState = rememberLazyListState()
     val budget = budgets[YearMonth.now().toString()] ?: defaultBudget
     Column(Modifier.fillMaxSize().padding(16.dp)) {
         if (page != SettingsPage.MENU) TextButton(onClick = { page = SettingsPage.MENU }) { Text("‹ 設定に戻る") }
         when (page) {
-            SettingsPage.MENU -> LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            SettingsPage.MENU -> LazyColumn(state = menuListState, verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 item { Text("設定", fontSize = 25.sp, fontWeight = FontWeight.Bold, color = DeepNavy); SettingsSectionTitle("入力設定") }
                 item { SettingsMenuItem("支出カテゴリ", "外食・食料品などの分類を管理") { page = SettingsPage.CATEGORIES } }
                 item { SettingsMenuItem("よく使う取引先", "入力時に使う取引先を管理") { page = SettingsPage.MERCHANTS } }
@@ -525,21 +529,106 @@ private fun paymentSourceTypeLabel(type: PaymentSourceType) = when (type) { Paym
 @Composable private fun SettingsMenuItem(title: String, description: String, onClick: () -> Unit) { Card(Modifier.fillMaxWidth().padding(vertical = 6.dp).clickable(onClick = onClick), colors = CardDefaults.cardColors(containerColor = Color.White)) { Row(Modifier.padding(18.dp), verticalAlignment = Alignment.CenterVertically) { Column(Modifier.weight(1f)) { Text(title, fontWeight = FontWeight.Bold, color = DeepNavy); Text(description, color = Color.Gray, fontSize = 13.sp) }; Text("›", color = WinterBlue, fontSize = 28.sp) } } }
 
 @Composable private fun StringSettings(title: String, hint: String, values: List<String>, add: (String) -> Unit, delete: (String) -> Unit, saveOrder:(List<String>)->Unit,rename:(String,String)->String?) {
-    var value by remember { mutableStateOf("") };var localValues by remember(values){mutableStateOf(values)};var editing by remember{mutableStateOf<String?>(null)};var editValue by remember{mutableStateOf("")};var editError by remember{mutableStateOf<String?>(null)}
-    val listState=rememberLazyListState();val scope=rememberCoroutineScope()
+    var value by remember { mutableStateOf("") };var editing by remember{mutableStateOf<String?>(null)};var editValue by remember{mutableStateOf("")};var editError by remember{mutableStateOf<String?>(null)}
     Column(Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(10.dp)) {
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.Bottom) { Text(title, fontSize = 22.sp, fontWeight = FontWeight.Bold, color = DeepNavy, modifier = Modifier.weight(1f)); Text("${values.size}/$USER_MANAGED_LIST_LIMIT", color = if (values.size >= USER_MANAGED_LIST_LIMIT) Color(0xFFD62F55) else Color.Gray) }
         Row(verticalAlignment = Alignment.CenterVertically) { OutlinedTextField(value, { value = it }, label = { Text(hint) }, modifier = Modifier.weight(1f), enabled = values.size < USER_MANAGED_LIST_LIMIT); Spacer(Modifier.width(8.dp)); Button(enabled = values.size < USER_MANAGED_LIST_LIMIT && value.trim().isNotEmpty(), onClick = { add(value); value = "" }) { Text("追加") } }
         if (values.size >= USER_MANAGED_LIST_LIMIT) Text("登録できるのは${USER_MANAGED_LIST_LIMIT}件までです。", color = Color(0xFFD62F55), fontSize = 13.sp)
-        LazyColumn(Modifier.weight(1f),state=listState, verticalArrangement = Arrangement.spacedBy(8.dp), contentPadding = PaddingValues(bottom = 20.dp)) { itemsIndexed(localValues, key = { _, item -> item }) { _, item -> Card(Modifier.fillMaxWidth()) { Row(Modifier.padding(start = 16.dp), verticalAlignment = Alignment.CenterVertically) { Text(item, Modifier.weight(1f).clickable{editing=item;editValue=item;editError=null});TextButton(onClick={editing=item;editValue=item;editError=null}){Text("編集")}; Text("☰", fontSize = 24.sp, color = WinterBlue, modifier = Modifier.padding(12.dp).pointerInput(item) { var dragged = 0f;detectDragGesturesAfterLongPress(onDragStart={dragged=0f},onDrag={change,amount->change.consume();dragged+=amount.y;var current=localValues.indexOf(item);while(dragged>48f&&current<localValues.lastIndex){localValues=moveItem(localValues,current,current+1);current++;dragged-=48f;if(current >= (listState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: current))scope.launch{listState.animateScrollToItem(current)}};while(dragged< -48f&&current>0){localValues=moveItem(localValues,current,current-1);current--;dragged+=48f;if(current<=listState.firstVisibleItemIndex)scope.launch{listState.animateScrollToItem(current)}}},onDragEnd={saveOrder(localValues)},onDragCancel={localValues=values}) }); TextButton(onClick = { delete(item) }) { Text("削除") } } } } }
+        ReorderableStringList(values, Modifier.weight(1f), saveOrder) { item ->
+            Row(Modifier.padding(start = 16.dp), verticalAlignment = Alignment.CenterVertically) {
+                Text(item, Modifier.weight(1f).clickable { editing=item;editValue=item;editError=null })
+                TextButton(onClick={editing=item;editValue=item;editError=null}){Text("編集")}
+                TextButton(onClick = { delete(item) }) { Text("削除") }
+            }
+        }
     }
     editing?.let{old->AlertDialog(onDismissRequest={editing=null},title={Text("名称を編集")},text={Column{OutlinedTextField(editValue,{editValue=it;editError=null},label={Text(title)},singleLine=true);editError?.let{Text(it,color=Color(0xFFD62F55),fontSize=13.sp)}}},confirmButton={Button(enabled=editValue.trim().isNotEmpty()&&editValue.trim()!=old,onClick={val error=rename(old,editValue);if(error==null)editing=null else editError=error}){Text("変更")}},dismissButton={TextButton(onClick={editing=null}){Text("キャンセル")}})}
+}
+
+@Composable private fun ReorderableStringList(values: List<String>, modifier: Modifier = Modifier, saveOrder: (List<String>) -> Unit, content: @Composable (String) -> Unit) {
+    var localValues by remember { mutableStateOf(values) }
+    var draggedItem by remember { mutableStateOf<String?>(null) }
+    var dragOffset by remember { mutableFloatStateOf(0f) }
+    var dragCenter by remember { mutableFloatStateOf(0f) }
+    var autoScrollSpeed by remember { mutableFloatStateOf(0f) }
+    val listState = rememberLazyListState()
+    val edgeSize = with(androidx.compose.ui.platform.LocalDensity.current) { 72.dp.toPx() }
+
+    LaunchedEffect(values, draggedItem) { if (draggedItem == null) localValues = values }
+    LaunchedEffect(draggedItem, autoScrollSpeed) {
+        while (draggedItem != null && autoScrollSpeed != 0f) {
+            listState.scrollBy(autoScrollSpeed)
+            kotlinx.coroutines.delay(16)
+            val item = draggedItem ?: break
+            val layout = listState.layoutInfo
+            val currentInfo = layout.visibleItemsInfo.firstOrNull { it.key == item } ?: continue
+            val targetInfo = layout.visibleItemsInfo.minByOrNull { kotlin.math.abs((it.offset + it.size / 2f) - dragCenter) }
+            val from = localValues.indexOf(item)
+            val to = targetInfo?.index ?: from
+            if (from >= 0 && to in localValues.indices && from != to) localValues = moveItem(localValues, from, to)
+            listState.layoutInfo.visibleItemsInfo.firstOrNull { it.key == item }?.let { dragOffset = dragCenter - (it.offset + it.size / 2f) }
+        }
+    }
+
+    LazyColumn(modifier, state = listState, verticalArrangement = Arrangement.spacedBy(8.dp), contentPadding = PaddingValues(bottom = 20.dp)) {
+        itemsIndexed(localValues, key = { _, item -> item }) { _, item ->
+            val dragging = draggedItem == item
+            Card(
+                Modifier.fillMaxWidth().zIndex(if (dragging) 1f else 0f).graphicsLayer { translationY = if (dragging) dragOffset else 0f },
+                elevation = CardDefaults.cardElevation(defaultElevation = if (dragging) 8.dp else 1.dp),
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Box(Modifier.weight(1f)) { content(item) }
+                    Box(
+                        Modifier.widthIn(min = 56.dp).heightIn(min = 56.dp).background(WinterBlue.copy(alpha = if (dragging) .16f else .07f), RoundedCornerShape(12.dp)).pointerInput(item) {
+                            detectDragGesturesAfterLongPress(
+                                onDragStart = {
+                                    draggedItem = item
+                                    dragOffset = 0f
+                                    listState.layoutInfo.visibleItemsInfo.firstOrNull { it.key == item }?.let { dragCenter = it.offset + it.size / 2f }
+                                },
+                                onDrag = { change, amount ->
+                                    change.consume()
+                                    dragOffset += amount.y
+                                    dragCenter += amount.y
+                                    val layout = listState.layoutInfo
+                                    val currentInfo = layout.visibleItemsInfo.firstOrNull { it.key == item } ?: return@detectDragGesturesAfterLongPress
+                                    val targetInfo = layout.visibleItemsInfo.minByOrNull { kotlin.math.abs((it.offset + it.size / 2f) - dragCenter) }
+                                    val from = localValues.indexOf(item)
+                                    val to = targetInfo?.index ?: from
+                                    if (from >= 0 && to in localValues.indices && from != to) {
+                                        localValues = moveItem(localValues, from, to)
+                                    }
+                                    val viewportStart = layout.viewportStartOffset.toFloat()
+                                    val viewportEnd = layout.viewportEndOffset.toFloat()
+                                    autoScrollSpeed = when {
+                                        dragCenter < viewportStart + edgeSize -> -((viewportStart + edgeSize - dragCenter) / edgeSize * 32f).coerceAtLeast(8f)
+                                        dragCenter > viewportEnd - edgeSize -> ((dragCenter - (viewportEnd - edgeSize)) / edgeSize * 32f).coerceAtLeast(8f)
+                                        else -> 0f
+                                    }
+                                },
+                                onDragEnd = {
+                                    val result = localValues
+                                    draggedItem = null
+                                    dragOffset = 0f
+                                    autoScrollSpeed = 0f
+                                    if (result != values) saveOrder(result)
+                                },
+                                onDragCancel = { draggedItem = null; dragOffset = 0f; autoScrollSpeed = 0f; localValues = values },
+                            )
+                        },
+                        contentAlignment = Alignment.Center,
+                    ) { Text("☰", fontSize = 26.sp, color = WinterBlue, fontWeight = FontWeight.Bold) }
+                }
+            }
+        }
+    }
 }
 
 @Composable private fun RecurringSettings(categories: List<String>, sources: List<PaymentSource>, defaultSourceId:String?, rows: List<RecurringExpense>, save: (Long?, Long, Int, String, String, String, LocalDate, String, Int) -> Unit, delete: (Long) -> Unit, duplicate: (Long) -> Unit, endContract: (Long, LocalDate) -> Unit, revisePrice: (Long, LocalDate, Long) -> Unit) {
     var showDialog by remember { mutableStateOf(false) }; var editing by remember { mutableStateOf<RecurringExpense?>(null) }; var showArchive by remember { mutableStateOf(false) }; var deleteCandidate by remember { mutableStateOf<RecurringExpense?>(null) }
     val today = LocalDate.now(); val visibleRows = rows.filter { item -> val ended = item.endDate?.let { LocalDate.parse(it).isBefore(today) } == true; ended == showArchive }
-    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(10.dp)) {
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) { Column(Modifier.weight(1f)) { Text("固定費の設定", fontSize = 22.sp, fontWeight = FontWeight.Bold, color = DeepNavy); Text(if (showArchive) "終了済みの固定費" else "タップで編集できます", color = Color.Gray, fontSize = 13.sp) }; if (!showArchive) Button(onClick = { editing = null; showDialog = true }) { Text("追加") } }
         TabRow(selectedTabIndex = if (showArchive) 1 else 0, containerColor = Color.Transparent) { Tab(selected = !showArchive, onClick = { showArchive = false }, text = { Text("契約中") }); Tab(selected = showArchive, onClick = { showArchive = true }, text = { Text("アーカイブ") }) }
         if (visibleRows.isEmpty()) { if(showArchive)EmptyMessage("アーカイブはありません") else EmptyStateCard("固定費はまだありません","サブスクや定期支払いを登録できます","固定費を追加"){editing=null;showDialog=true} } else visibleRows.forEach { item -> Card(Modifier.fillMaxWidth().clickable { editing = item; showDialog = true }) { Column(Modifier.padding(14.dp)) { Text(item.merchant.ifBlank { item.description.ifBlank { item.category } }, fontWeight = FontWeight.Bold); if(item.description.isNotBlank()) Text(item.description, color = Color.Gray, fontSize = 12.sp); Text("${item.contractDate.replace('-', '/')}契約 ・ ${intervalLabel(item.intervalMonths)}・毎月${item.paymentDay}日支払", color = Color.Gray, fontSize = 12.sp); Text("${item.category}  ${yen(item.priceRevisions.lastOrNull()?.amount ?: item.amount)}${item.endDate?.let { " ・ ${it.replace('-', '/')}終了" }.orEmpty()}", color = Color.Gray, fontSize = 13.sp); Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) { TextButton(onClick = { duplicate(item.id) }) { Text("複製") }; TextButton(onClick = { deleteCandidate = item }) { Text("削除") } } } } }
@@ -550,7 +639,7 @@ private fun paymentSourceTypeLabel(type: PaymentSourceType) = when (type) { Paym
 
 @Composable private fun RecurringDialog(categories: List<String>, sources: List<PaymentSource>, defaultSourceId:String?, existing: RecurringExpense?, dismiss: () -> Unit, endContract: (Long, LocalDate) -> Unit, revisePrice: (Long, LocalDate, Long) -> Unit, save: (Long?, Long, Int, String, String, String, LocalDate, String, Int) -> Unit) {
     var amount by remember(existing) { mutableStateOf(existing?.amount?.toString().orEmpty()) }; var day by remember(existing) { mutableIntStateOf(existing?.paymentDay ?: 1) }; var merchant by remember(existing) { mutableStateOf(existing?.merchant.orEmpty()) }; var description by remember(existing) { mutableStateOf(existing?.description.orEmpty()) }; var contractDate by remember(existing) { mutableStateOf(existing?.contractDate?.let(LocalDate::parse) ?: LocalDate.now()) }; var category by remember(existing, categories) { mutableStateOf(existing?.category ?: categories.firstOrNull().orEmpty()) }; var categoryExpanded by remember { mutableStateOf(false) }; var dayExpanded by remember { mutableStateOf(false) }; var intervalExpanded by remember { mutableStateOf(false) }; var interval by remember(existing) { mutableIntStateOf(existing?.intervalMonths ?: 1) }; var sourceId by remember(existing, sources, defaultSourceId) { mutableStateOf(existing?.paymentSourceId ?: defaultSourceId?.takeIf { id->sources.any{it.id==id} } ?: sources.firstOrNull()?.id.orEmpty()) }; var showEnd by remember { mutableStateOf(false) }; var showRevision by remember { mutableStateOf(false) }
-    AlertDialog(modifier=Modifier.imePadding().navigationBarsPadding(),onDismissRequest = dismiss, title = { Text(if (existing == null) "固定費を追加" else "固定費を編集") }, text = { Column(Modifier.heightIn(max=480.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) { PaymentSourcePicker(sources, sourceId) { sourceId = it }; Box { OutlinedButton(onClick = { categoryExpanded = true }, modifier = Modifier.fillMaxWidth()) { Text(category.ifBlank { "支出カテゴリを選択" }) }; DropdownMenu(categoryExpanded, { categoryExpanded = false }) { categories.forEach { DropdownMenuItem({ Text(it) }, { category = it; categoryExpanded = false }) } } }; DatePickerField("契約日",contractDate){contractDate=it}; Box { OutlinedButton(onClick = { intervalExpanded = true }, modifier = Modifier.fillMaxWidth()) { Text("支払い間隔：${intervalLabel(interval)}") }; DropdownMenu(intervalExpanded, { intervalExpanded = false }, modifier = Modifier.heightIn(max = 320.dp)) { (1..120).forEach { candidate -> DropdownMenuItem({ Text(intervalLabel(candidate)) }, { interval = candidate; intervalExpanded = false }) } } }; Box { OutlinedButton(onClick = { dayExpanded = true }, modifier = Modifier.fillMaxWidth()) { Text("支払日：毎月${day}日") }; DropdownMenu(dayExpanded, { dayExpanded = false }, modifier = Modifier.heightIn(max = 280.dp)) { (1..31).forEach { candidate -> DropdownMenuItem({ Text("毎月${candidate}日") }, { day = candidate; dayExpanded = false }) } } }; OutlinedTextField(amount, { amount = it.filter(Char::isDigit) }, label = { Text("基本料金") }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number)); OutlinedTextField(merchant, { merchant = it }, label = { Text("取引先") }); OutlinedTextField(description, { description = it }, label = { Text("内容") }); if (existing != null) { HorizontalDivider(); Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) { OutlinedButton(onClick = { showEnd = true }, modifier = Modifier.weight(1f)) { Text("契約終了") }; OutlinedButton(onClick = { showRevision = true }, modifier = Modifier.weight(1f)) { Text("料金改定") } } } } }, confirmButton = { Button(enabled = amount.toLongOrNull() != null && category in categories && sourceId.isNotBlank(), onClick = { save(existing?.id, amount.toLong(), day, category, merchant, description, contractDate, sourceId, interval) }) { Text("保存") } }, dismissButton = { TextButton(onClick = dismiss) { Text("キャンセル") } })
+    AlertDialog(modifier=Modifier.imePadding(),onDismissRequest = dismiss, title = { Text(if (existing == null) "固定費を追加" else "固定費を編集") }, text = { LazyColumn(Modifier.fillMaxWidth().heightIn(max=520.dp), verticalArrangement = Arrangement.spacedBy(8.dp), contentPadding = PaddingValues(bottom = 8.dp)) { item { PaymentSourcePicker(sources, sourceId) { sourceId = it } }; item { Box { OutlinedButton(onClick = { categoryExpanded = true }, modifier = Modifier.fillMaxWidth()) { Text(category.ifBlank { "支出カテゴリを選択" }) }; DropdownMenu(categoryExpanded, { categoryExpanded = false }) { categories.forEach { DropdownMenuItem({ Text(it) }, { category = it; categoryExpanded = false }) } } } }; item { DatePickerField("契約日",contractDate){contractDate=it} }; item { Box { OutlinedButton(onClick = { intervalExpanded = true }, modifier = Modifier.fillMaxWidth()) { Text("支払い間隔：${intervalLabel(interval)}") }; DropdownMenu(intervalExpanded, { intervalExpanded = false }, modifier = Modifier.heightIn(max = 320.dp)) { (1..120).forEach { candidate -> DropdownMenuItem({ Text(intervalLabel(candidate)) }, { interval = candidate; intervalExpanded = false }) } } } }; item { Box { OutlinedButton(onClick = { dayExpanded = true }, modifier = Modifier.fillMaxWidth()) { Text("支払日：毎月${day}日") }; DropdownMenu(dayExpanded, { dayExpanded = false }, modifier = Modifier.heightIn(max = 280.dp)) { (1..31).forEach { candidate -> DropdownMenuItem({ Text("毎月${candidate}日") }, { day = candidate; dayExpanded = false }) } } } }; item { OutlinedTextField(amount, { amount = it.filter(Char::isDigit) }, label = { Text("基本料金") }, modifier = Modifier.fillMaxWidth(), keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number)) }; item { OutlinedTextField(merchant, { merchant = it }, label = { Text("取引先") }, modifier = Modifier.fillMaxWidth()) }; item { OutlinedTextField(description, { description = it }, label = { Text("内容") }, modifier = Modifier.fillMaxWidth()) }; if (existing != null) item { Column(verticalArrangement = Arrangement.spacedBy(8.dp)) { HorizontalDivider(); Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) { OutlinedButton(onClick = { showEnd = true }, modifier = Modifier.weight(1f)) { Text("契約終了") }; OutlinedButton(onClick = { showRevision = true }, modifier = Modifier.weight(1f)) { Text("料金改定") } } } } } }, confirmButton = { Button(enabled = amount.toLongOrNull() != null && category in categories && sourceId.isNotBlank(), onClick = { save(existing?.id, amount.toLong(), day, category, merchant, description, contractDate, sourceId, interval) }) { Text("保存") } }, dismissButton = { TextButton(onClick = dismiss) { Text("キャンセル") } })
     if (showEnd && existing != null) DateAmountActionDialog("契約終了日", false, existing.endDate ?: LocalDate.now().toString(), "", { showEnd = false }) { date, _ -> endContract(existing.id, date); showEnd = false }
     if (showRevision && existing != null) DateAmountActionDialog("料金改定", true, LocalDate.now().toString(), existing.priceRevisions.lastOrNull()?.amount?.toString() ?: existing.amount.toString(), { showRevision = false }) { date, revised -> revisePrice(existing.id, date, revised); showRevision = false }
 }
@@ -603,7 +692,7 @@ private fun intervalLabel(months: Int): String = if (months >= 12 && months % 12
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable private fun DateAmountActionDialog(title: String, requireAmount: Boolean, initialDate: String, initialAmount: String, dismiss: () -> Unit, confirm: (LocalDate, Long) -> Unit) {
     var date by remember { mutableStateOf(LocalDate.parse(initialDate)) }; var amountText by remember { mutableStateOf(initialAmount) }; val amount = amountText.toLongOrNull()
-    AlertDialog(modifier=Modifier.imePadding().navigationBarsPadding(),onDismissRequest = dismiss, title = { Text(title) }, text = { Column(Modifier.heightIn(max=420.dp).verticalScroll(rememberScrollState()),verticalArrangement = Arrangement.spacedBy(10.dp)) { DatePickerField("適用日",date){date=it}; if (requireAmount) OutlinedTextField(amountText, { amountText = it.filter(Char::isDigit) }, label = { Text("新しい金額") }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number)) } }, confirmButton = { Button(enabled = !requireAmount || amount != null, onClick = { confirm(date, amount ?: 0L) }) { Text("適用") } }, dismissButton = { TextButton(onClick = dismiss) { Text("キャンセル") } })
+    AlertDialog(modifier=Modifier.imePadding(),onDismissRequest = dismiss, title = { Text(title) }, text = { LazyColumn(Modifier.fillMaxWidth().heightIn(max=420.dp),verticalArrangement = Arrangement.spacedBy(10.dp)) { item { DatePickerField("適用日",date){date=it} }; if (requireAmount) item { OutlinedTextField(amountText, { amountText = it.filter(Char::isDigit) }, label = { Text("新しい金額") }, modifier = Modifier.fillMaxWidth(), keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number)) } } }, confirmButton = { Button(enabled = !requireAmount || amount != null, onClick = { confirm(date, amount ?: 0L) }) { Text("適用") } }, dismissButton = { TextButton(onClick = dismiss) { Text("キャンセル") } })
 }
 
 @OptIn(ExperimentalMaterial3Api::class)

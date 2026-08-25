@@ -14,6 +14,8 @@ class UxPoliciesTest {
     @Test fun normalStateShowsNoHint()=assertEquals(ProgressiveHint.NONE,progressiveHint(1,true,5,0))
     @Test fun managedListsAllowTwentyButRejectTwentyFirst(){assertEquals(true,canAddManagedValue((1..19).map { it.toString() },"20"));assertEquals(false,canAddManagedValue((1..20).map { it.toString() },"21"))}
     @Test fun arbitraryMovePreservesAllValues(){assertEquals(listOf("B","C","D","A"),moveItem(listOf("A","B","C","D"),0,3))}
+    @Test fun firstItemMovesToEndInOneOperation(){assertEquals(listOf("B","C","D","A"),moveItem(listOf("A","B","C","D"),0,3))}
+    @Test fun lastItemMovesToStartInOneOperation(){assertEquals(listOf("D","A","B","C"),moveItem(listOf("A","B","C","D"),3,0))}
     @Test fun datePickerRoundTripDoesNotDependOnTimeZone(){val date=java.time.LocalDate.of(2026,8,17);assertEquals(date,dateFromPickerMillis(datePickerMillis(date)))}
     @Test fun transactionPrimaryDisplayUsesDescriptionThenMerchantThenCategory(){
         fun sample(description:String,merchant:String)=Transaction(1,1L,"食費",merchant,description,0L)
