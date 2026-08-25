@@ -1,4 +1,5 @@
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
+import java.util.Properties
 
 plugins {
     id("com.android.application")
@@ -7,8 +8,10 @@ plugins {
     id("org.jetbrains.kotlin.kapt")
 }
 
-
-
+val recoFiKeystorePropertiesFile = rootProject.file("keystore.properties")
+val recoFiKeystoreProperties = Properties().apply {
+    if (recoFiKeystorePropertiesFile.isFile) recoFiKeystorePropertiesFile.inputStream().use(::load)
+}
 
 val copyDebugApk by tasks.registering(Copy::class) {
     from(layout.buildDirectory.file("outputs/apk/debug/app-debug.apk"))
@@ -47,7 +50,22 @@ android {
         }
     }
 
+    signingConfigs {
+        if (recoFiKeystorePropertiesFile.isFile) {
+            create("recoFiDebug") {
+                val keyPath = recoFiKeystoreProperties.getProperty("storeFile")?.takeIf(String::isNotBlank) ?: error("keystore.properties: storeFile is required")
+                storeFile = rootProject.file(keyPath).also { require(it.isFile) { "RecoFi keystore not found: $it" } }
+                storePassword = recoFiKeystoreProperties.getProperty("storePassword")?.takeIf(String::isNotBlank) ?: error("keystore.properties: storePassword is required")
+                keyAlias = recoFiKeystoreProperties.getProperty("keyAlias")?.takeIf(String::isNotBlank) ?: error("keystore.properties: keyAlias is required")
+                keyPassword = recoFiKeystoreProperties.getProperty("keyPassword")?.takeIf(String::isNotBlank) ?: error("keystore.properties: keyPassword is required")
+            }
+        } else logger.warn("RecoFi dedicated debug keystore is not configured. Do not deploy to a real device without scripts/safe-deploy.ps1.")
+    }
+
     buildTypes {
+        debug {
+            if (recoFiKeystorePropertiesFile.isFile) signingConfig = signingConfigs.getByName("recoFiDebug")
+        }
         release {
             isMinifyEnabled = false
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
@@ -81,6 +99,9 @@ dependencies {
     implementation("com.google.mlkit:text-recognition-japanese:16.0.1")
     implementation("androidx.room:room-runtime:2.8.4")
     implementation("androidx.room:room-ktx:2.8.4")
+    implementation("androidx.datastore:datastore-preferences:1.2.1")
+    implementation("androidx.documentfile:documentfile:1.1.0")
+    implementation("androidx.work:work-runtime:2.11.2")
     kapt("androidx.room:room-compiler:2.8.4")
     debugImplementation("androidx.compose.ui:ui-tooling")
     testImplementation("junit:junit:4.13.2")

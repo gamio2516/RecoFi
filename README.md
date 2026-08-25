@@ -62,3 +62,5 @@
 4. Android 8.0（API 26）以上の端末またはエミュレーターで実行します。
 
 初回のGradle Syncでは、Android公式リポジトリから依存関係を取得するためインターネット接続が必要です。
+
+実データ入り端末への更新はAndroid Studioの通常Runではなく、[実機更新の安全手順](docs/SAFE_DEVICE_DEPLOYMENT.md)に従ってください。自動バックアップの安全設計は[自動バックアップ](docs/AUTO_BACKUP.md)を参照してください。

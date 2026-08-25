@@ -13,3 +13,6 @@
 /.agents
 /.codex
 *.apk
+keystore.properties
+*.jks
+*.keystore
