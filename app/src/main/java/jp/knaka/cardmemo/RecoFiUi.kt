@@ -225,10 +225,12 @@ internal fun CardMemoApp(vm: MainViewModel = viewModel()) {
     var detailCategory by remember { mutableStateOf<String?>(null) }
     var detailMerchant by remember { mutableStateOf<String?>(null) }
     var detailDate by remember { mutableStateOf<LocalDate?>(null) }
+    var detailTrendMonth by remember { mutableStateOf<YearMonth?>(null) }
     val fixedOnly = analysisMode == 1
     val calendarMode = analysisMode == 2
     val merchantMode = analysisMode == 3
-    val supportsAnnual = !fixedOnly && !calendarMode
+    val trendMode = analysisMode == 4
+    val supportsAnnual = !fixedOnly && !calendarMode && !trendMode
     LaunchedEffect(month) { ensure(month) }
     val analysis = remember(all, month, fixedOnly) { SpendingAnalysis.calculate(all, month, fixedOnly) }
     val monthRows = analysis.monthRows
@@ -237,11 +239,13 @@ internal fun CardMemoApp(vm: MainViewModel = viewModel()) {
     val totals = remember(analysisRows) { analysisRows.groupBy { it.category }.mapValues { it.value.sumOf(Transaction::amount) }.toList().sortedByDescending { it.second } }
     val total = totals.sumOf { it.second }
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
-        TabRow(selectedTabIndex = analysisMode, containerColor = Color.Transparent) { Tab(selected = analysisMode == 0, onClick = { analysisMode = 0 }, text = { Text("全体", maxLines = 1, fontSize = 12.sp) }); Tab(selected = analysisMode == 1, onClick = { analysisMode = 1 }, text = { Text("固定費", maxLines = 1, fontSize = 12.sp) }); Tab(selected = analysisMode == 2, onClick = { analysisMode = 2 }, text = { Text("カレンダー", maxLines = 1, fontSize = 10.sp) }); Tab(selected = analysisMode == 3, onClick = { analysisMode = 3 }, text = { Text("取引先", maxLines = 1, fontSize = 12.sp) }) }
+        TabRow(selectedTabIndex = analysisMode, containerColor = Color.Transparent) { Tab(selected = analysisMode == 0, onClick = { analysisMode = 0 }, text = { Text("全体", maxLines = 1, fontSize = 11.sp) }); Tab(selected = analysisMode == 1, onClick = { analysisMode = 1 }, text = { Text("固定費", maxLines = 1, fontSize = 11.sp) }); Tab(selected = analysisMode == 2, onClick = { analysisMode = 2 }, text = { Text("カレンダー", maxLines = 1, fontSize = 9.sp) }); Tab(selected = analysisMode == 3, onClick = { analysisMode = 3 }, text = { Text("取引先", maxLines = 1, fontSize = 11.sp) }); Tab(selected = analysisMode == 4, onClick = { analysisMode = 4; annual = false }, text = { Text("月次推移", maxLines = 1, fontSize = 10.sp) }) }
         if (supportsAnnual) Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Center) { FilterChip(selected = !annual, onClick = { annual = false }, label = { Text("月間") }); Spacer(Modifier.width(8.dp)); FilterChip(selected = annual, onClick = { annual = true }, label = { Text("年間") }) }
-        if (annual && supportsAnnual) YearHeader(month.year, { month = month.minusYears(1) }, { month = month.plusYears(1) }) else MonthHeader(month, { month = month.minusMonths(1) }, { month = month.plusMonths(1) })
-        Text(when { fixedOnly -> "固定費の分析"; merchantMode -> if (annual) "${month.year}年の取引先分析" else "取引先を軸にした分析"; calendarMode -> "支出カレンダー"; annual -> "${month.year}年のカテゴリ別支出"; else -> "カテゴリ別支出" }, fontSize = 22.sp, fontWeight = FontWeight.Bold, color = DeepNavy)
-        if (calendarMode) {
+        if (trendMode || annual && supportsAnnual) YearHeader(month.year, { month = month.minusYears(1) }, { month = month.plusYears(1) }) else MonthHeader(month, { month = month.minusMonths(1) }, { month = month.plusMonths(1) })
+        Text(when { trendMode -> "${month.year}年の月次推移"; fixedOnly -> "固定費の分析"; merchantMode -> if (annual) "${month.year}年の取引先分析" else "取引先を軸にした分析"; calendarMode -> "支出カレンダー"; annual -> "${month.year}年のカテゴリ別支出"; else -> "カテゴリ別支出" }, fontSize = 22.sp, fontWeight = FontWeight.Bold, color = DeepNavy)
+        if (trendMode) {
+            MonthlySpendingTrend(month.year, all.forYear(month.year)) { detailTrendMonth = it }
+        } else if (calendarMode) {
             SpendingCalendar(month, monthRows) { detailDate = it }
         } else if (merchantMode) {
             MerchantAnalysis(analysisRows, previousRows, annual) { detailMerchant = it }
@@ -259,9 +263,44 @@ internal fun CardMemoApp(vm: MainViewModel = viewModel()) {
     detailCategory?.let { category -> TransactionDetailDialog("$category の明細", analysisRows.filter { it.category == category }, { detailCategory = null }) }
     detailMerchant?.let { normalized -> TransactionDetailDialog(if (annual) "${month.year}年の取引先明細" else "取引先別の明細", analysisRows.filter { normalizeForLearning(it.merchant) == normalized }, { detailMerchant = null }) }
     detailDate?.let { date -> TransactionDetailDialog("${date.monthValue}月${date.dayOfMonth}日の明細", monthRows.filter { Instant.ofEpochMilli(it.usedAt).atZone(ZoneId.systemDefault()).toLocalDate() == date }, { detailDate = null }) }
+    detailTrendMonth?.let { selected -> TransactionDetailDialog("${selected.year}年${selected.monthValue}月の明細", all.forMonth(selected), { detailTrendMonth = null }) }
 }
 
 @Composable private fun YearHeader(year:Int,previous:()->Unit,next:()->Unit){Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.SpaceBetween,verticalAlignment=Alignment.CenterVertically){OutlinedButton(onClick=previous){Text("‹")};Text("${year}年",fontSize=20.sp,fontWeight=FontWeight.Bold,color=DeepNavy);OutlinedButton(onClick=next){Text("›")}}}
+
+@Composable private fun MonthlySpendingTrend(year: Int, rows: List<Transaction>, openMonth: (YearMonth) -> Unit) {
+    val monthlyTotals = remember(rows, year) {
+        (1..12).map { monthValue ->
+            val target = YearMonth.of(year, monthValue)
+            target to rows.filter { YearMonth.from(Instant.ofEpochMilli(it.usedAt).atZone(ZoneId.systemDefault())) == target }.sumOf(Transaction::amount)
+        }
+    }
+    val yearTotal = monthlyTotals.sumOf { it.second }
+    val elapsedMonths = if (year == LocalDate.now().year) LocalDate.now().monthValue else 12
+    val average = if (elapsedMonths > 0) yearTotal / elapsedMonths else 0L
+    val maximum = monthlyTotals.maxOfOrNull { it.second }?.coerceAtLeast(1L) ?: 1L
+    Card(colors = CardDefaults.cardColors(containerColor = Color.White), modifier = Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                Column { Text("年間合計", color = Color.Gray, fontSize = 12.sp); Text(yen(yearTotal), color = DeepNavy, fontWeight = FontWeight.Bold, fontSize = 20.sp) }
+                Column(horizontalAlignment = Alignment.End) { Text("月平均", color = Color.Gray, fontSize = 12.sp); Text(yen(average), color = DeepNavy, fontWeight = FontWeight.SemiBold) }
+            }
+            Spacer(Modifier.height(4.dp))
+            monthlyTotals.forEach { (target, amount) ->
+                Row(Modifier.fillMaxWidth().clickable { openMonth(target) }.padding(vertical = 5.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Text("${target.monthValue}月", modifier = Modifier.width(34.dp), fontSize = 12.sp, color = Color(0xFF202124))
+                    Box(Modifier.weight(1f).height(14.dp).background(Color(0xFFE3E6ED), RoundedCornerShape(7.dp))) {
+                        Box(Modifier.fillMaxWidth((amount.toFloat() / maximum).coerceIn(0f, 1f)).fillMaxHeight().background(WinterBlue, RoundedCornerShape(7.dp)))
+                    }
+                    Spacer(Modifier.width(10.dp))
+                    Text(yen(amount), modifier = Modifier.width(82.dp), fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = DeepNavy)
+                    Text("›", color = WinterBlue)
+                }
+            }
+            Text("各月を押すと明細を確認できます", color = Color.Gray, fontSize = 11.sp)
+        }
+    }
+}
 
 @Composable private fun SpendingCalendar(month: YearMonth, rows: List<Transaction>, openDay: (LocalDate) -> Unit) {
     val daily = rows.groupBy { Instant.ofEpochMilli(it.usedAt).atZone(ZoneId.systemDefault()).toLocalDate() }.mapValues { it.value.sumOf(Transaction::amount) }
