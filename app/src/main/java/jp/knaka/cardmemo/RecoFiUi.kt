@@ -226,7 +226,7 @@ internal fun CardMemoApp(vm: MainViewModel = viewModel()) {
     var detailMerchant by remember { mutableStateOf<String?>(null) }
     var detailDate by remember { mutableStateOf<LocalDate?>(null) }
     var detailTrendMonth by remember { mutableStateOf<YearMonth?>(null) }
-    var detailTrendRows by remember { mutableStateOf<List<Transaction>>(emptyList()) }
+    var detailTrendRows by remember { mutableStateOf<List<Transaction>?>(null) }
     val fixedOnly = analysisMode == 1
     val calendarMode = analysisMode == 2
     val merchantMode = analysisMode == 3
@@ -261,7 +261,7 @@ internal fun CardMemoApp(vm: MainViewModel = viewModel()) {
     detailCategory?.let { category -> val rows = analysisRows.filter { it.category == category }; TransactionDetailDialog("$category の明細", rows, { detailCategory = null }, if (annual) month.year else null) { selected -> detailTrendRows = rows.forMonth(selected); detailCategory = null; detailTrendMonth = selected } }
     detailMerchant?.let { normalized -> val rows = analysisRows.filter { normalizeForLearning(it.merchant) == normalized }; TransactionDetailDialog(if (annual) "${month.year}年の取引先明細" else "取引先別の明細", rows, { detailMerchant = null }, if (annual) month.year else null) { selected -> detailTrendRows = rows.forMonth(selected); detailMerchant = null; detailTrendMonth = selected } }
     detailDate?.let { date -> TransactionDetailDialog("${date.monthValue}月${date.dayOfMonth}日の明細", monthRows.filter { Instant.ofEpochMilli(it.usedAt).atZone(ZoneId.systemDefault()).toLocalDate() == date }, { detailDate = null }) }
-    detailTrendMonth?.let { selected -> TransactionDetailDialog("${selected.year}年${selected.monthValue}月の明細", detailTrendRows.ifEmpty { all.forMonth(selected) }, { detailTrendMonth = null; detailTrendRows = emptyList() }) }
+    detailTrendMonth?.let { selected -> TransactionDetailDialog("${selected.year}年${selected.monthValue}月の明細", detailTrendRows ?: all.forMonth(selected), { detailTrendMonth = null; detailTrendRows = null }) }
 }
 
 @Composable private fun YearHeader(year:Int,previous:()->Unit,next:()->Unit){Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.SpaceBetween,verticalAlignment=Alignment.CenterVertically){OutlinedButton(onClick=previous){Text("‹")};Text("${year}年",fontSize=20.sp,fontWeight=FontWeight.Bold,color=DeepNavy);OutlinedButton(onClick=next){Text("›")}}}
