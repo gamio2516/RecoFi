@@ -86,13 +86,13 @@ object StatementTools {
                     }.distinctBy { Triple(it.date, it.amount, normalize(it.merchant)) }
                     return ReadResult(rows, total)
                 }
-                val first = recognize(2)
+                val first = recognize(4)
                 val expected = first.declaredTotal
                 if (expected != null && first.entries.sumOf { it.amount } == expected) first else {
                     val second = recognize(3)
                     val total = expected ?: second.declaredTotal
                     if (total == null) second else if (second.entries.sumOf { it.amount } == total) second.copy(declaredTotal = total) else {
-                        val third = recognize(4)
+                        val third = recognize(2)
                         listOf(first, second, third).minByOrNull { candidate -> kotlin.math.abs(candidate.entries.sumOf { it.amount } - total) }!!.copy(declaredTotal = total)
                     }
                 }

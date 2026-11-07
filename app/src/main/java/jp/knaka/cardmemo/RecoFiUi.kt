@@ -500,7 +500,7 @@ internal fun CardMemoApp(vm: MainViewModel = viewModel()) {
                                     val targetMonth = fixedMonth ?: inferredMonth
                                     val occupied = targetSource.isNotBlank() && importedStatements.any { it.statementMonth == targetMonth.toString() && it.paymentSourceId == targetSource }
                                     if (occupied) status = "この月・カードにはすでにファイルが紐づいています。先に現在のファイルを削除してください"
-                                    else { saveImported(ImportedStatement(if (targetSource.isBlank()) inferredMonth.toString() else targetMonth.toString(), targetSource, fileName, hash, entries, result.declaredTotal)); if (targetSource.isNotBlank()) setProgress(targetMonth, targetSource, entries.size, 0, 0, 0); recordImportedFile(hash); recordImportedFile(statementHash); status = if (targetSource.isBlank()) "${fileName} をファイル一覧へ保存しました" else "${fileName} をこの月・カードへ紐づけました" }
+                                    else { val rowsTotal=entries.sumOf{it.amount};val mismatch=result.declaredTotal?.let{it!=rowsTotal}==true;saveImported(ImportedStatement(if (targetSource.isBlank()) inferredMonth.toString() else targetMonth.toString(), targetSource, fileName, hash, entries, result.declaredTotal)); if (targetSource.isNotBlank()) setProgress(targetMonth, targetSource, entries.size, 0, 0, 0); recordImportedFile(hash); recordImportedFile(statementHash); status = if(mismatch)"取込完了。ただし帳票合計 ${yen(result.declaredTotal!!)} と取込明細合計 ${yen(rowsTotal)} が一致しません。自動消込前に内容をご確認ください" else if (targetSource.isBlank()) "${fileName} をファイル一覧へ保存しました" else "${fileName} をこの月・カードへ紐づけました" }
                                 }
                             }
                         }
