@@ -2,6 +2,7 @@ package jp.knaka.cardmemo
 
 import android.content.Context
 import android.graphics.Bitmap
+import android.graphics.Rect
 import android.graphics.pdf.PdfRenderer
 import android.net.Uri
 import android.os.ParcelFileDescriptor
@@ -78,7 +79,31 @@ object StatementTools {
                             bitmap.eraseColor(android.graphics.Color.WHITE)
                             page.render(bitmap, null, null, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
                             val result = recognizer.process(InputImage.fromBitmap(bitmap, 0)).awaitResult()
-                            addAll(parseRows(result, targetMonth))
+                            val billingZone = findBillingZone(result)
+                            addAll(parseRows(result, targetMonth, billingZone))
+                            // A whole A4 page is large enough that ML Kit can silently omit small
+                            // lines even at a high render scale.  Re-read it in overlapping bands;
+                            // the overlap prevents a row on a band boundary from being lost.
+                            if (billingZone != null) {
+                                val bandHeight = 1_200
+                                val overlap = 180
+                                var top = 0
+                                while (top < bitmap.height) {
+                                    val bottom = minOf(top + bandHeight, bitmap.height)
+                                    val band = Bitmap.createBitmap(bitmap.width, bottom - top, Bitmap.Config.ARGB_8888)
+                                    android.graphics.Canvas(band).drawBitmap(
+                                        bitmap,
+                                        Rect(0, top, bitmap.width, bottom),
+                                        Rect(0, 0, band.width, band.height),
+                                        null
+                                    )
+                                    val bandResult = recognizer.process(InputImage.fromBitmap(band, 0)).awaitResult()
+                                    addAll(parseRows(bandResult, targetMonth, billingZone))
+                                    band.recycle()
+                                    if (bottom == bitmap.height) break
+                                    top = bottom - overlap
+                                }
+                            }
                             total = parseRakutenDeclaredTotal(result) ?: parseRakutenDeclaredTotal(result.text) ?: total
                             bitmap.recycle()
                         }
@@ -101,9 +126,17 @@ object StatementTools {
     }
 
     internal fun parseRakutenDeclaredTotal(text: String): Long? {
-        val compact = text.replace(Regex("[\\s　]+"), "")
-        val labeled = listOf("明細中の利用金額合計", "利用金額合計", "ご請求金額").firstNotNullOfOrNull { label ->
-            Regex("${Regex.escape(label)}.{0,120}?([0-9][0-9,]{3,})円?").find(compact)?.groupValues?.get(1)?.replace(",", "")?.toLongOrNull()
+        val compact = text.replace(Regex("[\\s　]+"), " ")
+        val labeled = listOf("明細中の利用金額合計", "利用金額合計").firstNotNullOfOrNull { label ->
+            val tail = compact.substringAfter(label, "").take(120)
+            val commaAmounts = Regex("[0-9]{1,3}(?:,[0-9]{3})+").findAll(tail)
+                .mapNotNull { it.value.replace(",", "").toLongOrNull() }.toList()
+            val candidates = commaAmounts.ifEmpty {
+                Regex("(?<![0-9])[0-9]{4,}(?![0-9])").findAll(tail).mapNotNull { it.value.toLongOrNull() }.toList()
+            }
+            candidates.asSequence()
+                .filter { it >= 1_000 }
+                .maxOrNull()
         }
         if (labeled != null) return labeled
         if (!compact.contains("お支払予定金額の明細") && !compact.contains("支払予定金額の明細")) return null
@@ -129,7 +162,30 @@ object StatementTools {
             ?.second
     }
 
-    private fun parseRows(text: Text, month: YearMonth): List<CardStatementEntry> {
+    private data class BillingZone(val left: Int, val right: Int)
+
+    private fun findBillingZone(text: Text): BillingZone? {
+        data class HeaderPiece(val text: String, val left: Int, val centerY: Int)
+        val pieces = text.textBlocks.flatMap { it.lines }.flatMap { it.elements }.mapNotNull { element ->
+            val box = element.boundingBox ?: return@mapNotNull null
+            HeaderPiece(element.text.trim(), box.left, box.centerY())
+        }.sortedBy { it.centerY }
+        val rows = mutableListOf<MutableList<HeaderPiece>>()
+        pieces.forEach { piece ->
+            val row = rows.lastOrNull()
+            if (row == null || kotlin.math.abs(row.map { it.centerY }.average() - piece.centerY) > 24) rows += mutableListOf(piece) else row += piece
+        }
+        val header = rows.firstOrNull { row -> row.joinToString("") { it.text }.replace(" ", "").contains("当月請求額") } ?: return null
+        val sorted = header.sortedBy { it.left }
+        val index = sorted.indexOfFirst { it.text.replace(" ", "").contains("当月請求額") || it.text.contains("請求額") }
+        if (index < 0) return null
+        val billing = sorted[index].let { found -> sorted.getOrNull(index - 1)?.takeIf { found.text.contains("請求額") && it.text.contains("当月") } ?: found }
+        val previous = sorted.lastOrNull { it.left < billing.left - 8 }?.left
+        val next = sorted.firstOrNull { it.left > billing.left + 8 }?.left
+        return BillingZone(previous?.let { (it + billing.left) / 2 } ?: billing.left - 18, next?.let { (billing.left + it) / 2 } ?: Int.MAX_VALUE)
+    }
+
+    private fun parseRows(text: Text, month: YearMonth, billingZone: BillingZone? = findBillingZone(text)): List<CardStatementEntry> {
         data class Piece(val text: String, val left: Int, val centerY: Int)
         val pieces = text.textBlocks.flatMap { it.lines }.flatMap { it.elements }.mapNotNull { element ->
             val box = element.boundingBox ?: return@mapNotNull null
@@ -141,20 +197,10 @@ object StatementTools {
             if (row == null || kotlin.math.abs(row.map { it.centerY }.average() - piece.centerY) > 24) rows += mutableListOf(piece)
             else row += piece
         }
-        val header = rows.firstOrNull { row -> row.joinToString("") { it.text }.replace(" ", "").contains("当月請求額") } ?: return emptyList()
-        val sortedHeader = header.sortedBy { it.left }
-        val billingIndex = sortedHeader.indexOfFirst { it.text.replace(" ", "").contains("当月請求額") || it.text.contains("請求額") }
-        if (billingIndex < 0) return emptyList()
-        val billingHeader = sortedHeader[billingIndex].let { found ->
-            sortedHeader.getOrNull(billingIndex - 1)?.takeIf { found.text.contains("請求額") && it.text.contains("当月") } ?: found
-        }
-        val previousHeaderLeft = sortedHeader.lastOrNull { it.left < billingHeader.left - 8 }?.left
-        val nextHeaderLeft = sortedHeader.firstOrNull { it.left > billingHeader.left + 8 }?.left
-        val zoneLeft = previousHeaderLeft?.let { (it + billingHeader.left) / 2 } ?: billingHeader.left - 18
-        val zoneRight = nextHeaderLeft?.let { (billingHeader.left + it) / 2 } ?: Int.MAX_VALUE
+        val zone = billingZone ?: return emptyList()
         return rows.mapNotNull { row ->
             val sorted = row.sortedBy { it.left }
-            val amount = sorted.firstOrNull { it.left >= zoneLeft && it.left < zoneRight && parseMoney(it.text) != null }?.text?.let(::parseMoney) ?: return@mapNotNull null
+            val amount = sorted.firstOrNull { it.left >= zone.left && it.left < zone.right && parseMoney(it.text) != null }?.text?.let(::parseMoney) ?: return@mapNotNull null
             parseRow(sorted.joinToString(" ") { it.text }, month, amount)
         }
     }
@@ -206,3 +252,4 @@ object StatementTools {
         addOnFailureListener { if (continuation.isActive) continuation.resumeWithException(it) }
     }
 }
+
