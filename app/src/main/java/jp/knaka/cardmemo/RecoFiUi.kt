@@ -15,6 +15,7 @@ import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -34,6 +35,9 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.zIndex
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.text.font.FontWeight
@@ -184,7 +188,6 @@ internal fun CardMemoApp(vm: MainViewModel = viewModel()) {
     var onlyOpen by remember { mutableStateOf(false) }
     LaunchedEffect(month) { ensure(month) }
     val monthRows = all.forMonth(month).filter { it.paymentSourceId == sourceId }
-    val sourceColor=paymentSourceColor(sources.firstOrNull{it.id==sourceId}?.colorKey.orEmpty())
     val rows = if (onlyOpen) monthRows.filterNot { it.id in confirmedIds } else monthRows
     var lockedWarning by remember { mutableStateOf(false) }
     var lockFailed by remember { mutableStateOf(false) }
@@ -193,7 +196,7 @@ internal fun CardMemoApp(vm: MainViewModel = viewModel()) {
     Column(Modifier.fillMaxSize().padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
         PaymentSourcePicker(sources, sourceId, selectSource)
         MonthHeader(month, { month = month.minusMonths(1) }, { month = month.plusMonths(1) })
-        Card(colors = CardDefaults.cardColors(containerColor = sourceColor), shape = RoundedCornerShape(22.dp), modifier = Modifier.fillMaxWidth()) { Row(Modifier.fillMaxWidth().padding(18.dp), verticalAlignment = Alignment.CenterVertically) { Column(Modifier.weight(1f)) { Text("この月の利用額", color = Color.White.copy(.78f)); Text(yen(monthRows.sumOf { it.amount }), color = Color.White, fontSize = 32.sp, fontWeight = FontWeight.Bold); Text("${monthRows.size}件 ・ 要確認 ${monthRows.count { it.id !in confirmedIds }}件", color = Color.White.copy(.82f)) }; OutlinedButton(onClick = { openTransfer(month, sourceId) }, border = BorderStroke(1.dp, Color.White.copy(.38f)), colors = ButtonDefaults.outlinedButtonColors(containerColor = Color.White.copy(.10f), contentColor = Color.White), contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp)) { Text("カード明細を取込・照合  ›", fontSize = 11.sp, fontWeight = FontWeight.Bold) } } }
+        Card(colors = CardDefaults.cardColors(containerColor = WinterBlue), shape = RoundedCornerShape(22.dp), modifier = Modifier.fillMaxWidth()) { Row(Modifier.fillMaxWidth().padding(18.dp), verticalAlignment = Alignment.CenterVertically) { Column(Modifier.weight(1f)) { Text("この月の利用額", color = Color.White.copy(.78f)); Text(yen(monthRows.sumOf { it.amount }), color = Color.White, fontSize = 32.sp, fontWeight = FontWeight.Bold); Text("${monthRows.size}件 ・ 要確認 ${monthRows.count { it.id !in confirmedIds }}件", color = Color.White.copy(.82f)) }; OutlinedButton(onClick = { openTransfer(month, sourceId) }, border = BorderStroke(1.dp, Color.White.copy(.38f)), colors = ButtonDefaults.outlinedButtonColors(containerColor = Color.White.copy(.10f), contentColor = Color.White), contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp)) { Text("カード明細を取込・照合  ›", fontSize = 11.sp, fontWeight = FontWeight.Bold) } } }
         val progress=reconciliationProgress["$month|$sourceId"]
         if(progress!=null&&progress.matched>progress.confirmed)EmptyStateCard("確認待ちの候補があります","候補を確認すると、この月を確定できます","候補を確認"){openTransfer(month,sourceId)}
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) { Switch(onlyOpen, { onlyOpen = it }); Spacer(Modifier.width(8.dp)); Text("未確認のみ"); Spacer(Modifier.weight(1f)); val isLocked = month.toString() in lockedMonths; TextButton(onClick = { if (isLocked) confirmUnlock = true else { val blockers=lockBlockers(month); if(blockers.isEmpty())setLocked(month,true) else { blockerMessage=blockers.joinToString("\n"){it.message};lockFailed=true } } }, contentPadding = PaddingValues(horizontal = 6.dp)) { Text(if (isLocked) "🔒 確定済み" else "月を確定", color = Color.Gray, fontSize = 11.sp) } }
@@ -582,6 +585,7 @@ private fun paymentSourceTypeLabel(type: PaymentSourceType) = when (type) { Paym
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.Bottom) { Text(title, fontSize = 22.sp, fontWeight = FontWeight.Bold, color = DeepNavy, modifier = Modifier.weight(1f)); Text("${values.size}/$USER_MANAGED_LIST_LIMIT", color = if (values.size >= USER_MANAGED_LIST_LIMIT) Color(0xFFD62F55) else Color.Gray) }
         Row(verticalAlignment = Alignment.CenterVertically) { OutlinedTextField(value, { value = it }, label = { Text(hint) }, modifier = Modifier.weight(1f), enabled = values.size < USER_MANAGED_LIST_LIMIT); Spacer(Modifier.width(8.dp)); Button(enabled = values.size < USER_MANAGED_LIST_LIMIT && value.trim().isNotEmpty(), onClick = { add(value); value = "" }) { Text("追加") } }
         if (values.size >= USER_MANAGED_LIST_LIMIT) Text("登録できるのは${USER_MANAGED_LIST_LIMIT}件までです。", color = Color(0xFFD62F55), fontSize = 13.sp)
+        Text("項目を長押しして、そのまま上下に動かすと並び替えられます", color = Color.Gray, fontSize = 12.sp)
         ReorderableStringList(values, Modifier.weight(1f), saveOrder) { item ->
             Row(Modifier.padding(start = 16.dp), verticalAlignment = Alignment.CenterVertically) {
                 Text(item, Modifier.weight(1f).clickable { editing=item;editValue=item;editError=null })
@@ -596,18 +600,26 @@ private fun paymentSourceTypeLabel(type: PaymentSourceType) = when (type) { Paym
 @Composable private fun ReorderableStringList(values: List<String>, modifier: Modifier = Modifier, saveOrder: (List<String>) -> Unit, content: @Composable (String) -> Unit) {
     var localValues by remember { mutableStateOf(values) }
     val listState = rememberLazyListState()
+    var draggingItem by remember { mutableStateOf<String?>(null) }
+    var dragOffset by remember { mutableFloatStateOf(0f) }
+    val moveThreshold = with(androidx.compose.ui.platform.LocalDensity.current) { 54.dp.toPx() }
     LaunchedEffect(values) { localValues = values }
 
     LazyColumn(modifier, state = listState, verticalArrangement = Arrangement.spacedBy(8.dp), contentPadding = PaddingValues(bottom = 20.dp)) {
-        itemsIndexed(localValues, key = { _, item -> item }) { index, item ->
-            Card(Modifier.fillMaxWidth(), elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Box(Modifier.weight(1f)) { content(item) }
-                    Column(Modifier.padding(end = 6.dp)) {
-                        FilledTonalIconButton(enabled = index > 0, onClick = { localValues = moveItem(localValues,index,index-1); saveOrder(localValues) }, modifier = Modifier.size(38.dp)) { Text("↑", fontSize = 20.sp, fontWeight = FontWeight.Bold) }
-                        FilledTonalIconButton(enabled = index < localValues.lastIndex, onClick = { localValues = moveItem(localValues,index,index+1); saveOrder(localValues) }, modifier = Modifier.size(38.dp)) { Text("↓", fontSize = 20.sp, fontWeight = FontWeight.Bold) }
-                    }
-                }
+        itemsIndexed(localValues, key = { _, item -> item }) { _, item ->
+            val isDragging = draggingItem == item
+            Card(
+                Modifier.fillMaxWidth().zIndex(if(isDragging)1f else 0f).graphicsLayer { translationY=if(isDragging)dragOffset else 0f; shadowElevation=if(isDragging)16f else 0f; scaleX=if(isDragging)1.02f else 1f; scaleY=if(isDragging)1.02f else 1f }
+                    .pointerInput(item,localValues) { detectDragGesturesAfterLongPress(
+                        onDragStart={draggingItem=item;dragOffset=0f},
+                        onDragCancel={draggingItem=null;dragOffset=0f},
+                        onDragEnd={draggingItem=null;dragOffset=0f;saveOrder(localValues)},
+                        onDrag={change,amount->change.consume();dragOffset+=amount.y;val current=localValues.indexOf(item);val direction=when{dragOffset>moveThreshold->1;dragOffset< -moveThreshold->-1;else->0};val target=current+direction;if(direction!=0&&target in localValues.indices){localValues=moveItem(localValues,current,target);dragOffset-=direction*moveThreshold}}
+                    ) },
+                elevation = CardDefaults.cardElevation(defaultElevation = if(isDragging)8.dp else 1.dp),
+                colors = CardDefaults.cardColors(containerColor = if(isDragging)Color(0xFFF3F7FF) else Color.White)
+            ) {
+                Box(Modifier.fillMaxWidth()) { content(item) }
             }
         }
     }
@@ -709,3 +721,4 @@ private fun intervalLabel(months: Int): String = if (months >= 12 && months % 12
 }
 
 private fun normalizeForLearning(value: String): String = MerchantSpendingAnalysis.normalize(value)
+
