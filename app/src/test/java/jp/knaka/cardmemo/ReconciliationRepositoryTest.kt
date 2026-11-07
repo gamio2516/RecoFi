@@ -59,7 +59,7 @@ class ReconciliationRepositoryTest {
         repository.autoMatch("hash", "card", listOf(differentlyNamed))
         val match = db.reconciliation().loadMatch(101)!!
         assertEquals(1L, match.transactionId)
-        assertEquals(ReconciliationStatus.SUGGESTED.name, match.status)
+        assertEquals(ReconciliationStatus.CONFIRMED.name, match.status)
     }
 
     @Test fun `confirmed user match survives automatic rerun`() {
@@ -80,11 +80,9 @@ class ReconciliationRepositoryTest {
         assertEquals(1, db.reconciliation().loadRejected().size)
     }
 
-    @Test fun `manual confirmation changes derived progress`() {
+    @Test fun `automatic unique match is immediately confirmed in progress`() {
         db.transactions().upsertAll(listOf(TransactionEntity(1, 1200, "dining", "スターバックス", "", usedAt, null, "card")))
         repository.autoMatch("hash", "card", listOf(tx()))
-        assertEquals(1, repository.progress(month, "card").needsReview)
-        repository.confirm(101, 1)
         val progress = repository.progress(month, "card")
         assertEquals(1, progress.confirmed)
         assertEquals(0, progress.remaining)
@@ -111,3 +109,4 @@ class ReconciliationRepositoryTest {
         assertTrue(repository.canLock(month, listOf(PaymentSource("cash", "現金", PaymentSourceType.CASH))).isEmpty())
     }
 }
+
