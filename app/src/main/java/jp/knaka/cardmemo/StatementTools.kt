@@ -69,29 +69,47 @@ object StatementTools {
         val recognizer = TextRecognition.getClient(JapaneseTextRecognizerOptions.Builder().build())
         return descriptor.use { pfd ->
             PdfRenderer(pfd).use { renderer ->
-                var declaredTotal: Long? = null
-                val entries = buildList {
+                suspend fun recognize(scale: Int): ReadResult {
+                    var total: Long? = null
+                    val rows = buildList {
                     for (pageIndex in 0 until renderer.pageCount) {
                         renderer.openPage(pageIndex).use { page ->
-                            val scale = 2
                             val bitmap = Bitmap.createBitmap(page.width * scale, page.height * scale, Bitmap.Config.ARGB_8888)
                             bitmap.eraseColor(android.graphics.Color.WHITE)
                             page.render(bitmap, null, null, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
                             val result = recognizer.process(InputImage.fromBitmap(bitmap, 0)).awaitResult()
                             addAll(parseRows(result, targetMonth))
-                            declaredTotal = parseRakutenDeclaredTotal(result) ?: parseRakutenDeclaredTotal(result.text) ?: declaredTotal
+                            total = parseRakutenDeclaredTotal(result) ?: parseRakutenDeclaredTotal(result.text) ?: total
                             bitmap.recycle()
                         }
                     }
-                }.distinctBy { Triple(it.date, it.amount, normalize(it.merchant)) }
-                ReadResult(entries, declaredTotal)
+                    }.distinctBy { Triple(it.date, it.amount, normalize(it.merchant)) }
+                    return ReadResult(rows, total)
+                }
+                val first = recognize(2)
+                val expected = first.declaredTotal
+                if (expected != null && first.entries.sumOf { it.amount } == expected) first else {
+                    val second = recognize(3)
+                    val total = expected ?: second.declaredTotal
+                    if (total == null) second else if (second.entries.sumOf { it.amount } == total) second.copy(declaredTotal = total) else {
+                        val third = recognize(4)
+                        listOf(first, second, third).minByOrNull { candidate -> kotlin.math.abs(candidate.entries.sumOf { it.amount } - total) }!!.copy(declaredTotal = total)
+                    }
+                }
             }
         }.also { recognizer.close() }
     }
 
     internal fun parseRakutenDeclaredTotal(text: String): Long? {
         val compact = text.replace(Regex("[\\s　]+"), "")
-        return Regex("明細中の利用金額合計.{0,24}?([0-9][0-9,]{3,})円?").find(compact)?.groupValues?.get(1)?.replace(",", "")?.toLongOrNull()
+        val labeled = listOf("明細中の利用金額合計", "利用金額合計", "ご請求金額").firstNotNullOfOrNull { label ->
+            Regex("${Regex.escape(label)}.{0,120}?([0-9][0-9,]{3,})円?").find(compact)?.groupValues?.get(1)?.replace(",", "")?.toLongOrNull()
+        }
+        if (labeled != null) return labeled
+        if (!compact.contains("お支払予定金額の明細") && !compact.contains("支払予定金額の明細")) return null
+        return Regex("(?<![0-9])([0-9]{1,3}(?:,[0-9]{3})+|[0-9]{4,})(?![0-9])").findAll(compact)
+            .mapNotNull { it.groupValues[1].replace(",", "").toLongOrNull() }.filter { it >= 1_000 }
+            .groupingBy { it }.eachCount().maxWithOrNull(compareBy<Map.Entry<Long, Int>> { it.value }.thenBy { it.key })?.key
     }
 
     private fun parseRakutenDeclaredTotal(text: Text): Long? {
