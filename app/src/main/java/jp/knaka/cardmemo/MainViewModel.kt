@@ -43,7 +43,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val _importedStatements = MutableStateFlow(settingsRepository.loadImportedStatements())
     val importedStatements = _importedStatements.asStateFlow()
 
-    init { ensureRecurringFor(YearMonth.now());refreshReconciliation() }
+    init { linkExistingRecurringTransactions();ensureRecurringFor(YearMonth.now());refreshReconciliation() }
 
     fun addTransaction(amount: Long, category: String, merchant: String, description: String, usedAt: Long, paymentSourceId: String, id: Long? = null) {
         val month=YearMonth.from(Instant.ofEpochMilli(usedAt).atZone(ZoneId.systemDefault()));if(month.toString() in _lockedMonths.value)return
@@ -53,8 +53,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun deleteTransaction(id: Long) {val target=_transactions.value.firstOrNull{it.id==id}?:return;if(target.yearMonth().toString() in _lockedMonths.value)return;updateTransactions(_transactions.value.filterNot { it.id == id })}
     fun toggleConfirmed(id: Long) {
-        val match=StorageProvider.database(getApplication()).reconciliation().loadMatches().firstOrNull{it.transactionId==id}?:return;val statement=StorageProvider.database(getApplication()).statements().loadEntry(match.statementEntryId)?:return;val imported=_importedStatements.value.firstOrNull{it.fileHash==statement.fileHash}?:return;if(imported.statementMonth in _lockedMonths.value)return
-        if(match.status==ReconciliationStatus.SUGGESTED.name)reconciliationRepository.confirm(match.statementEntryId,id) else return;refreshReconciliation()
+        val db=StorageProvider.database(getApplication());val match=db.reconciliation().loadMatches().firstOrNull{it.transactionId==id}?:return;val statement=db.statements().loadEntry(match.statementEntryId)?:return;val imported=_importedStatements.value.firstOrNull{it.fileHash==statement.fileHash}?:return;if(imported.statementMonth in _lockedMonths.value)return
+        if(match.status==ReconciliationStatus.SUGGESTED.name)reconciliationRepository.confirm(match.statementEntryId,id) else if(match.status==ReconciliationStatus.CONFIRMED.name){val now=System.currentTimeMillis();db.reconciliation().upsertMatch(match.copy(status=ReconciliationStatus.SUGGESTED.name,updatedAt=now,confirmedAt=null))}else return;refreshReconciliation()
     }
     fun confirmTransactions(ids: Set<Long>, statementMonth: YearMonth) {
         if(statementMonth.toString() in _lockedMonths.value)return;val db=StorageProvider.database(getApplication());db.reconciliation().loadMatches().filter{it.transactionId in ids&&it.status==ReconciliationStatus.SUGGESTED.name}.forEach{reconciliationRepository.confirm(it.statementEntryId,it.transactionId!!)};refreshReconciliation()
@@ -136,6 +136,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         _recurringExpenses.value = if (id == null) _recurringExpenses.value + item else _recurringExpenses.value.map { if (it.id == id) item else it }
         settingsRepository.saveRecurringExpenses(_recurringExpenses.value)
         if (id != null) updateTransactions(_transactions.value.filterNot { it.recurringId == id && it.yearMonth() >= YearMonth.now() && it.yearMonth().toString() !in _lockedMonths.value })
+        linkExistingRecurringTransactions()
         ensureRecurringFor(YearMonth.now())
     }
 
@@ -177,6 +178,23 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         if (updated != _transactions.value) updateTransactions(updated)
     }
 
+    private fun linkExistingRecurringTransactions() {
+        val zone=ZoneId.systemDefault()
+        val linked=_transactions.value.map { transaction ->
+            if(transaction.recurringId!=null)return@map transaction
+            val date=Instant.ofEpochMilli(transaction.usedAt).atZone(zone).toLocalDate();val transactionMonth=YearMonth.from(date)
+            val candidates=_recurringExpenses.value.filter { expense ->
+                if(!RecurringExpensePolicy.isScheduledFor(expense,transactionMonth))return@filter false
+                val scheduled=RecurringExpensePolicy.billingDate(expense,transactionMonth)
+                val merchantMatch=normalizeMerchant(expense.merchant).let{it.isNotBlank()&&it==normalizeMerchant(transaction.merchant)}
+                val descriptionMatch=normalizeMerchant(expense.description).let{it.isNotBlank()&&it==normalizeMerchant(transaction.description)}
+                expense.paymentSourceId==transaction.paymentSourceId&&expense.category==transaction.category&&RecurringExpensePolicy.amountOn(expense,scheduled)==transaction.amount&&kotlin.math.abs(java.time.temporal.ChronoUnit.DAYS.between(scheduled,date))<=3&&(merchantMatch||descriptionMatch)
+            }
+            if(candidates.size==1)transaction.copy(recurringId=candidates.single().id)else transaction
+        }
+        if(linked!=_transactions.value)updateTransactions(linked)
+    }
+
     private fun Transaction.yearMonth(): YearMonth = YearMonth.from(Instant.ofEpochMilli(usedAt).atZone(ZoneId.systemDefault()))
     private fun normalizeMerchant(value: String) = value.lowercase().filter { it.isLetterOrDigit() }
     private fun updateTransactions(items: List<Transaction>) { _transactions.value = items.sortedByDescending { it.usedAt }; transactionRepository.save(_transactions.value) }
@@ -186,3 +204,4 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private fun reorderTemplate(flow:MutableStateFlow<List<String>>,items:List<String>,save:(List<String>)->Unit){if(items.toSet()==flow.value.toSet()){flow.value=items;save(items)}}
     private fun renameTemplate(flow:MutableStateFlow<List<String>>,old:String,new:String,rename:(String,String)->Unit):String?=runCatching{rename(old,new);val clean=new.trim();flow.value=flow.value.map{if(it==old)clean else it};null}.getOrElse{it.message?:"変更できませんでした"}
 }
+
