@@ -37,6 +37,7 @@ class StatementCsvParserTest {
 
     @Test fun readsRakutenPrintedStatementTotal() {
         assertEquals(123456L, StatementTools.parseRakutenDeclaredTotal("明細中の利用金額合計：123,456円"))
+        assertEquals(358824L, StatementTools.parseRakutenDeclaredTotal("明細中の利用金額合計\n内）キャッシング 0\n358,824"))
     }
 
     @Test fun duplicateRowsAreRemovedUsingNormalizedMerchant() {

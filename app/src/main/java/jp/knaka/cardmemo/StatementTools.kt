@@ -79,7 +79,7 @@ object StatementTools {
                             page.render(bitmap, null, null, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
                             val result = recognizer.process(InputImage.fromBitmap(bitmap, 0)).awaitResult()
                             addAll(parseRows(result, targetMonth))
-                            declaredTotal = parseRakutenDeclaredTotal(result.text) ?: declaredTotal
+                            declaredTotal = parseRakutenDeclaredTotal(result) ?: parseRakutenDeclaredTotal(result.text) ?: declaredTotal
                             bitmap.recycle()
                         }
                     }
@@ -91,7 +91,24 @@ object StatementTools {
 
     internal fun parseRakutenDeclaredTotal(text: String): Long? {
         val compact = text.replace(Regex("[\\s　]+"), "")
-        return Regex("明細中の利用金額合計[:：]?([0-9,]+)円?").find(compact)?.groupValues?.get(1)?.replace(",", "")?.toLongOrNull()
+        return Regex("明細中の利用金額合計.{0,24}?([0-9][0-9,]{3,})円?").find(compact)?.groupValues?.get(1)?.replace(",", "")?.toLongOrNull()
+    }
+
+    private fun parseRakutenDeclaredTotal(text: Text): Long? {
+        data class LocatedLine(val text: String, val left: Int, val right: Int, val centerY: Int, val height: Int)
+        val lines = text.textBlocks.flatMap { it.lines }.mapNotNull { line ->
+            val box = line.boundingBox ?: return@mapNotNull null
+            LocatedLine(line.text.replace(Regex("[\\s　]+"), ""), box.left, box.right, box.centerY(), box.height())
+        }
+        val anchor = lines.firstOrNull { it.text.contains("明細中の利用金額合計") }
+            ?: lines.firstOrNull { it.text.contains("明細中") && it.text.contains("利用金額合計") }
+            ?: return null
+        parseMoney(anchor.text.substringAfter("合計", ""))?.takeIf { it >= 1_000 }?.let { return it }
+        return lines.asSequence()
+            .filter { it.left >= anchor.right - 12 && kotlin.math.abs(it.centerY - anchor.centerY) <= maxOf(anchor.height, it.height) }
+            .mapNotNull { candidate -> parseMoney(candidate.text)?.takeIf { it >= 1_000 }?.let { candidate to it } }
+            .minByOrNull { (candidate, _) -> kotlin.math.abs(candidate.centerY - anchor.centerY) * 10_000 + kotlin.math.abs(candidate.left - anchor.right) }
+            ?.second
     }
 
     private fun parseRows(text: Text, month: YearMonth): List<CardStatementEntry> {
@@ -108,11 +125,18 @@ object StatementTools {
         }
         val header = rows.firstOrNull { row -> row.joinToString("") { it.text }.replace(" ", "").contains("当月請求額") } ?: return emptyList()
         val sortedHeader = header.sortedBy { it.left }
-        val billingHeader = sortedHeader.firstOrNull { it.text.contains("当月") || it.text.contains("請求額") } ?: return emptyList()
-        val nextHeaderLeft = sortedHeader.firstOrNull { it.left > billingHeader.left + 8 }?.left ?: Int.MAX_VALUE
+        val billingIndex = sortedHeader.indexOfFirst { it.text.replace(" ", "").contains("当月請求額") || it.text.contains("請求額") }
+        if (billingIndex < 0) return emptyList()
+        val billingHeader = sortedHeader[billingIndex].let { found ->
+            sortedHeader.getOrNull(billingIndex - 1)?.takeIf { found.text.contains("請求額") && it.text.contains("当月") } ?: found
+        }
+        val previousHeaderLeft = sortedHeader.lastOrNull { it.left < billingHeader.left - 8 }?.left
+        val nextHeaderLeft = sortedHeader.firstOrNull { it.left > billingHeader.left + 8 }?.left
+        val zoneLeft = previousHeaderLeft?.let { (it + billingHeader.left) / 2 } ?: billingHeader.left - 18
+        val zoneRight = nextHeaderLeft?.let { (billingHeader.left + it) / 2 } ?: Int.MAX_VALUE
         return rows.mapNotNull { row ->
             val sorted = row.sortedBy { it.left }
-            val amount = sorted.firstOrNull { it.left >= billingHeader.left - 18 && it.left < nextHeaderLeft && parseMoney(it.text) != null }?.text?.let(::parseMoney) ?: return@mapNotNull null
+            val amount = sorted.firstOrNull { it.left >= zoneLeft && it.left < zoneRight && parseMoney(it.text) != null }?.text?.let(::parseMoney) ?: return@mapNotNull null
             parseRow(sorted.joinToString(" ") { it.text }, month, amount)
         }
     }
