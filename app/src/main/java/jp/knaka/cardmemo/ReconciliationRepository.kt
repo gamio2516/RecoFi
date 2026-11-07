@@ -26,4 +26,3 @@ class ReconciliationRepository private constructor(private val db: RecoFiDatabas
  fun declareNoActivity(month:YearMonth,sourceId:String){db.reconciliation().upsertDeclarations(listOf(MonthlyPaymentSourceDeclarationEntity(month.toString(),sourceId,"NO_ACTIVITY",System.currentTimeMillis())))}
  fun canLock(month:YearMonth,sources:List<PaymentSource>):List<LockBlocker>{val declarations=db.reconciliation().loadDeclarations().associateBy{it.month to it.paymentSourceId};return sources.filter{it.isCard}.mapNotNull{s->val p=progress(month,s.id);when{p.imported==0&&declarations[month.toString() to s.id]?.status!="NO_ACTIVITY"->LockBlocker(s.name,missingStatement=true);p.remaining>0->LockBlocker(s.name,p.needsReview,p.unresolved);else->null}}}
 }
-

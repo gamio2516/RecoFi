@@ -77,6 +77,7 @@ data class ImportedStatementEntity(
     val statementMonth: String?,
     val paymentSourceId: String?,
     val fileName: String,
+    val declaredTotal: Long? = null,
 )
 
 @Entity(

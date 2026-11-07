@@ -109,4 +109,3 @@ class ReconciliationRepositoryTest {
         assertTrue(repository.canLock(month, listOf(PaymentSource("cash", "現金", PaymentSourceType.CASH))).isEmpty())
     }
 }
-

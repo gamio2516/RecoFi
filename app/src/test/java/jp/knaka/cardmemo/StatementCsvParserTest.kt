@@ -27,6 +27,18 @@ class StatementCsvParserTest {
         assertEquals(3000, StatementCsvParser.parse(csv, month).single().amount)
     }
 
+    @Test fun rakutenUsesCurrentMonthBillingAmountAndSkipsBlankRows() {
+        val csv = "利用日,利用店名,利用金額,当月請求額\n7/1,当月の店,1000,600\n7/2,翌月扱いの店,2000,"
+        val result = StatementCsvParser.parse(csv, month)
+        assertEquals(1, result.size)
+        assertEquals("当月の店", result.single().merchant)
+        assertEquals(600, result.single().amount)
+    }
+
+    @Test fun readsRakutenPrintedStatementTotal() {
+        assertEquals(123456L, StatementTools.parseRakutenDeclaredTotal("明細中の利用金額合計：123,456円"))
+    }
+
     @Test fun duplicateRowsAreRemovedUsingNormalizedMerchant() {
         val csv = "日付,加盟店名,金額\n7/1,STAR BUCKS,500\n7/1,starbucks,500"
         assertEquals(1, StatementCsvParser.parse(csv, month).size)

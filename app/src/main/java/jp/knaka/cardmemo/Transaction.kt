@@ -59,6 +59,7 @@ data class ImportedStatement(
     val fileName: String,
     val fileHash: String,
     val entries: List<CardStatementEntry>,
+    val declaredTotal: Long? = null,
 )
 
 enum class ReconciliationStatus { PENDING, SUGGESTED, CONFIRMED }

@@ -26,9 +26,11 @@ import kotlin.coroutines.resumeWithException
 import kotlinx.coroutines.suspendCancellableCoroutine
 
 object StatementTools {
-    suspend fun readStatementFile(context: Context, uri: Uri, targetMonth: YearMonth): List<CardStatementEntry> {
+    data class ReadResult(val entries: List<CardStatementEntry>, val declaredTotal: Long? = null)
+
+    suspend fun readStatementFile(context: Context, uri: Uri, targetMonth: YearMonth): ReadResult {
         val name = displayName(context, uri).lowercase()
-        return if (name.endsWith(".csv")) readCsv(context, uri, targetMonth) else readRakutenPdf(context, uri, targetMonth)
+        return if (name.endsWith(".csv")) ReadResult(readCsv(context, uri, targetMonth)) else readRakutenPdf(context, uri, targetMonth)
     }
 
     fun displayName(context: Context, uri: Uri): String {
@@ -62,12 +64,13 @@ object StatementTools {
         val text = utf8 ?: bytes.toString(Charset.forName("MS932"))
         return StatementCsvParser.parse(text, targetMonth)
     }
-    suspend fun readRakutenPdf(context: Context, uri: Uri, targetMonth: YearMonth): List<CardStatementEntry> {
-        val descriptor = context.contentResolver.openFileDescriptor(uri, "r") ?: return emptyList()
+    suspend fun readRakutenPdf(context: Context, uri: Uri, targetMonth: YearMonth): ReadResult {
+        val descriptor = context.contentResolver.openFileDescriptor(uri, "r") ?: return ReadResult(emptyList())
         val recognizer = TextRecognition.getClient(JapaneseTextRecognizerOptions.Builder().build())
         return descriptor.use { pfd ->
             PdfRenderer(pfd).use { renderer ->
-                buildList {
+                var declaredTotal: Long? = null
+                val entries = buildList {
                     for (pageIndex in 0 until renderer.pageCount) {
                         renderer.openPage(pageIndex).use { page ->
                             val scale = 2
@@ -76,19 +79,26 @@ object StatementTools {
                             page.render(bitmap, null, null, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
                             val result = recognizer.process(InputImage.fromBitmap(bitmap, 0)).awaitResult()
                             addAll(parseRows(result, targetMonth))
+                            declaredTotal = parseRakutenDeclaredTotal(result.text) ?: declaredTotal
                             bitmap.recycle()
                         }
                     }
                 }.distinctBy { Triple(it.date, it.amount, normalize(it.merchant)) }
+                ReadResult(entries, declaredTotal)
             }
         }.also { recognizer.close() }
     }
 
+    internal fun parseRakutenDeclaredTotal(text: String): Long? {
+        val compact = text.replace(Regex("[\\s　]+"), "")
+        return Regex("明細中の利用金額合計[:：]?([0-9,]+)円?").find(compact)?.groupValues?.get(1)?.replace(",", "")?.toLongOrNull()
+    }
+
     private fun parseRows(text: Text, month: YearMonth): List<CardStatementEntry> {
         data class Piece(val text: String, val left: Int, val centerY: Int)
-        val pieces = text.textBlocks.flatMap { it.lines }.mapNotNull { line ->
-            val box = line.boundingBox ?: return@mapNotNull null
-            Piece(line.text.trim(), box.left, box.centerY())
+        val pieces = text.textBlocks.flatMap { it.lines }.flatMap { it.elements }.mapNotNull { element ->
+            val box = element.boundingBox ?: return@mapNotNull null
+            Piece(element.text.trim(), box.left, box.centerY())
         }.sortedBy { it.centerY }
         val rows = mutableListOf<MutableList<Piece>>()
         pieces.forEach { piece ->
@@ -96,10 +106,18 @@ object StatementTools {
             if (row == null || kotlin.math.abs(row.map { it.centerY }.average() - piece.centerY) > 24) rows += mutableListOf(piece)
             else row += piece
         }
-        return rows.mapNotNull { row -> parseRow(row.sortedBy { it.left }.joinToString(" ") { it.text }, month) }
+        val header = rows.firstOrNull { row -> row.joinToString("") { it.text }.replace(" ", "").contains("当月請求額") } ?: return emptyList()
+        val sortedHeader = header.sortedBy { it.left }
+        val billingHeader = sortedHeader.firstOrNull { it.text.contains("当月") || it.text.contains("請求額") } ?: return emptyList()
+        val nextHeaderLeft = sortedHeader.firstOrNull { it.left > billingHeader.left + 8 }?.left ?: Int.MAX_VALUE
+        return rows.mapNotNull { row ->
+            val sorted = row.sortedBy { it.left }
+            val amount = sorted.firstOrNull { it.left >= billingHeader.left - 18 && it.left < nextHeaderLeft && parseMoney(it.text) != null }?.text?.let(::parseMoney) ?: return@mapNotNull null
+            parseRow(sorted.joinToString(" ") { it.text }, month, amount)
+        }
     }
 
-    private fun parseRow(raw: String, month: YearMonth): CardStatementEntry? {
+    private fun parseRow(raw: String, month: YearMonth, billingAmount: Long): CardStatementEntry? {
         val dateMatch = Regex("(?<!\\d)(?:(\\d{2,4})[./年\\s-]+)?(\\d{1,2})[./月\\s-]+(\\d{1,2})(?:日)?").find(raw) ?: return null
         val parsedYear = dateMatch.groupValues[1].toIntOrNull()
         val year = when { parsedYear == null -> month.year; parsedYear < 100 -> 2000 + parsedYear; else -> parsedYear }
@@ -107,15 +125,15 @@ object StatementTools {
         val day = dateMatch.groupValues[3].toIntOrNull() ?: return null
         val date = runCatching { LocalDate.of(year, monthNumber, day) }.getOrNull() ?: return null
         val tail = raw.substring(dateMatch.range.last + 1)
-        val amountMatches = Regex("(?<![\\d,])([0-9][0-9,]{1,})(?:円)?(?![\\d,])").findAll(tail).toList()
-        val amountMatch = amountMatches.firstOrNull() ?: return null
-        val amount = amountMatch.groupValues[1].replace(",", "").toLongOrNull() ?: return null
-        if (amount <= 0) return null
-        val merchant = tail.substring(0, amountMatch.range.first)
+        if (billingAmount <= 0) return null
+        val firstNumber = Regex("(?<![\\d,])[0-9][0-9,]*(?![\\d,])").find(tail)
+        val merchant = tail.substring(0, firstNumber?.range?.first ?: tail.length)
             .replace(Regex("\\s+"), " ").trim(' ', '・', '-')
         if (merchant.isBlank()) return null
-        return CardStatementEntry(date, amount, merchant, raw)
+        return CardStatementEntry(date, billingAmount, merchant, raw)
     }
+
+    private fun parseMoney(value: String): Long? = value.replace(Regex("[^0-9-]"), "").toLongOrNull()?.let { kotlin.math.abs(it) }
 
     fun match(entries: List<CardStatementEntry>, transactions: List<Transaction>, sourceId: String): List<StatementMatch> {
         return ReconciliationMatcher.match(entries, transactions, sourceId)

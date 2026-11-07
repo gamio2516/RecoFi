@@ -16,7 +16,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         MonthlyLockEntity::class, MonthlyBudgetEntity::class,
         AppBudgetSettingsEntity::class,
     ],
-    version = 6,
+    version = 7,
     exportSchema = true,
 )
 abstract class RecoFiDatabase : RoomDatabase() {
@@ -98,9 +98,14 @@ abstract class RecoFiDatabase : RoomDatabase() {
                 db.execSQL("UPDATE payment_sources SET colorKey='BLUE' WHERE id='rakuten'")
             }
         }
+        val MIGRATION_6_7 = object : Migration(6, 7) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE imported_statements ADD COLUMN declaredTotal INTEGER")
+            }
+        }
         fun open(context: Context): RecoFiDatabase = Room.databaseBuilder(context, RecoFiDatabase::class.java, DATABASE_NAME)
             .allowMainThreadQueries()
-            .addMigrations(MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6)
+            .addMigrations(MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7)
             .build()
     }
 }
