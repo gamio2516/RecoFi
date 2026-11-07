@@ -10,6 +10,12 @@ internal fun <T> moveItem(values:List<T>,from:Int,to:Int):List<T>{
 internal fun datePickerMillis(date:java.time.LocalDate)=date.toEpochDay()*86_400_000L
 internal fun dateFromPickerMillis(millis:Long)=java.time.LocalDate.ofEpochDay(millis/86_400_000L)
 
+internal fun recurringPaymentDayLabel(intervalMonths:Int,paymentDay:Int):String =
+    if(intervalMonths==1) "毎月${paymentDay}日支払" else "支払月の${paymentDay}日支払"
+
+internal fun removeGeneratedTransactions(items:List<Transaction>,recurringId:Long):List<Transaction> =
+    items.filterNot { it.recurringId == recurringId }
+
 internal fun resolveInitialPaymentSourceId(
     sources: List<PaymentSource>,
     defaultPaymentSourceId: String?,

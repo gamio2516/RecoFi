@@ -35,7 +35,7 @@ fun stableCategoryId(name: String): String = "category_" + name.toByteArray(Char
 data class PriceRevision(val effectiveDate: String, val amount: Long)
 
 enum class PaymentSourceType { CREDIT_CARD, CASH, OTHER }
-data class PaymentSource(val id: String, val name: String, val type: PaymentSourceType) {
+data class PaymentSource(val id: String, val name: String, val type: PaymentSourceType, val colorKey: String = "GREEN") {
     val isCard: Boolean get() = type == PaymentSourceType.CREDIT_CARD
 }
 
@@ -68,8 +68,8 @@ data class MonthlyReconciliationProgress(val imported:Int,val confirmed:Int,val 
 data class ReconciliationProgress(val imported:Int=0,val matched:Int=0,val suggested:Int=0,val confirmed:Int=0)
 
 val DefaultPaymentSources = listOf(
-    PaymentSource("rakuten", "楽天カード", PaymentSourceType.CREDIT_CARD),
-    PaymentSource("other", "その他の支払い", PaymentSourceType.OTHER),
+    PaymentSource("rakuten", "楽天カード", PaymentSourceType.CREDIT_CARD, "BLUE"),
+    PaymentSource("other", "その他の支払い", PaymentSourceType.OTHER, "GREEN"),
 )
 
 val DefaultCategories = listOf("食料品", "外食", "日用品", "交通", "医療", "娯楽", "衣服", "その他")

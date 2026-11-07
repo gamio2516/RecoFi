@@ -17,6 +17,12 @@ class UxPoliciesTest {
     @Test fun firstItemMovesToEndInOneOperation(){assertEquals(listOf("B","C","D","A"),moveItem(listOf("A","B","C","D"),0,3))}
     @Test fun lastItemMovesToStartInOneOperation(){assertEquals(listOf("D","A","B","C"),moveItem(listOf("A","B","C","D"),3,0))}
     @Test fun datePickerRoundTripDoesNotDependOnTimeZone(){val date=java.time.LocalDate.of(2026,8,17);assertEquals(date,dateFromPickerMillis(datePickerMillis(date)))}
+    @Test fun monthlyPaymentDayLabelSaysEveryMonth(){assertEquals("毎月10日支払",recurringPaymentDayLabel(1,10))}
+    @Test fun annualPaymentDayLabelRefersToPaymentMonth(){assertEquals("支払月の10日支払",recurringPaymentDayLabel(12,10))}
+    @Test fun deletingRecurringPlanRemovesOnlyItsGeneratedTransactions(){
+        val items=listOf(Transaction(1,1,"A","","",0,recurringId=10),Transaction(2,1,"A","","",0,recurringId=20),Transaction(3,1,"A","","",0))
+        assertEquals(listOf(2L,3L),removeGeneratedTransactions(items,10).map{it.id})
+    }
     @Test fun transactionPrimaryDisplayUsesDescriptionThenMerchantThenCategory(){
         fun sample(description:String,merchant:String)=Transaction(1,1L,"食費",merchant,description,0L)
         assertEquals("コーヒー",transactionPrimaryText(sample("コーヒー","スターバックス")))

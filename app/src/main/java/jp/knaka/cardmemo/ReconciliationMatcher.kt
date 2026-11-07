@@ -9,8 +9,6 @@ import kotlin.math.abs
 /** Pure rule-based reconciliation. AI can later consume ambiguous candidates separately. */
 object ReconciliationMatcher {
     private const val MAX_DAY_GAP = 7L
-    private const val MIN_MERCHANT_SIMILARITY = 0.22
-    private const val AMBIGUITY_MARGIN = 5
 
     fun match(
         entries: List<CardStatementEntry>,
@@ -28,16 +26,14 @@ object ReconciliationMatcher {
                     val date = transaction.localDate(zoneId)
                     val dayGap = abs(ChronoUnit.DAYS.between(date, entry.date))
                     if (dayGap > MAX_DAY_GAP) return@mapNotNull null
-                    val merchantSimilarity=similarity(normalizeMerchant(transaction.merchant),normalizeMerchant(entry.merchant))
-                    if(merchantSimilarity<MIN_MERCHANT_SIMILARITY)return@mapNotNull null
-                    Candidate(transaction, score(dayGap, merchantSimilarity),dayGap.toInt(),merchantSimilarity)
+                    Candidate(transaction, score(dayGap), dayGap.toInt())
                 }
                 .sortedWith(compareByDescending<Candidate> { it.score }.thenBy { it.transaction.id })
                 .toList()
 
             val best = ranked.firstOrNull()
             val second = ranked.getOrNull(1)
-            val ambiguous = best != null && second != null && best.score - second.score <= AMBIGUITY_MARGIN
+            val ambiguous = best != null && second != null && best.dayDifference == second.dayDifference
             val selected = best?.takeUnless { ambiguous }
             selected?.let { usedIds += it.transaction.id }
             StatementMatch(statement=entry, transactionId=selected?.transaction?.id, score=selected?.score ?: best?.score ?: 0)
@@ -59,24 +55,14 @@ object ReconciliationMatcher {
     fun candidate(entry:CardStatementEntry,transaction:Transaction,zoneId:ZoneId=ZoneId.systemDefault()):CandidateInfo?{
         if(entry.amount!=transaction.amount)return null
         val gap=abs(ChronoUnit.DAYS.between(transaction.localDate(zoneId),entry.date));if(gap>MAX_DAY_GAP)return null
-        val similarity=similarity(normalizeMerchant(transaction.merchant),normalizeMerchant(entry.merchant));if(similarity<MIN_MERCHANT_SIMILARITY)return null
-        val confidence=if(similarity>=.72&&gap<=3)MatchConfidence.HIGH else MatchConfidence.MEDIUM
-        return CandidateInfo(transaction.id,score(gap,similarity),gap.toInt(),confidence,"金額一致・利用日${gap}日差・取引先${if(confidence==MatchConfidence.HIGH)"が高類似" else "が類似"}")
+        val confidence=if(gap==0L)MatchConfidence.HIGH else MatchConfidence.MEDIUM
+        return CandidateInfo(transaction.id,score(gap),gap.toInt(),confidence,"金額一致・利用日${gap}日差")
     }
-    private fun score(dayGap: Long, merchantSimilarity:Double) = ((1.0-dayGap/14.0)*40+merchantSimilarity*60).toInt().coerceIn(0,100)
-
-    private fun similarity(left: String, right: String): Double {
-        if (left.isBlank() || right.isBlank()) return 0.0
-        if (left == right || left in right || right in left) return 1.0
-        val leftPairs = left.windowed(2).toSet()
-        val rightPairs = right.windowed(2).toSet()
-        if (leftPairs.isEmpty() || rightPairs.isEmpty()) return 0.0
-        return leftPairs.intersect(rightPairs).size.toDouble() / leftPairs.union(rightPairs).size
-    }
+    private fun score(dayGap: Long) = (100-dayGap*8).toInt().coerceIn(0,100)
 
     private fun Transaction.localDate(zoneId: ZoneId): LocalDate =
         Instant.ofEpochMilli(usedAt).atZone(zoneId).toLocalDate()
 
     data class CandidateInfo(val transactionId:Long,val score:Int,val dayDifference:Int,val confidence:MatchConfidence,val reason:String)
-    private data class Candidate(val transaction: Transaction, val score: Int,val dayDifference:Int,val similarity:Double)
+    private data class Candidate(val transaction: Transaction, val score: Int,val dayDifference:Int)
 }

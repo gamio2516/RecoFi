@@ -6,7 +6,7 @@ import jp.knaka.cardmemo.storage.*
 class AppSettingsRepository(context: Context) {
     private val db = StorageProvider.database(context)
     init {
-        if (db.referenceData().loadPaymentSources().isEmpty()) db.referenceData().upsertPaymentSources(DefaultPaymentSources.mapIndexed { i, it -> PaymentSourceEntity(it.id, it.name, it.type.name, i) })
+        if (db.referenceData().loadPaymentSources().isEmpty()) db.referenceData().upsertPaymentSources(DefaultPaymentSources.mapIndexed { i, it -> PaymentSourceEntity(it.id, it.name, it.type.name, i, colorKey=it.colorKey) })
         if (db.referenceData().loadCategories().isEmpty()) db.referenceData().upsertCategories(DefaultCategories.mapIndexed { i, it -> CategoryEntity(stableCategoryId(it),it, i) })
     }
     fun loadCategories() = db.referenceData().loadCategories().map { it.name }
@@ -25,8 +25,8 @@ class AppSettingsRepository(context: Context) {
     fun saveDefaultMonthlyBudget(amount: Long) { val old=db.monthlyState().loadBudgetSettings();db.monthlyState().upsertBudgetSettings(AppBudgetSettingsEntity(defaultMonthlyBudget=amount.coerceAtLeast(0),defaultPaymentSourceId=old?.defaultPaymentSourceId)) }
     fun loadDefaultPaymentSourceId(): String? = db.monthlyState().loadBudgetSettings()?.defaultPaymentSourceId?.takeIf { id -> db.referenceData().loadPaymentSources().any { it.id == id } }
     fun saveDefaultPaymentSourceId(id: String?) { val valid=id?.takeIf { candidate -> db.referenceData().loadPaymentSources().any { it.id==candidate } };val old=db.monthlyState().loadBudgetSettings();db.monthlyState().upsertBudgetSettings(AppBudgetSettingsEntity(defaultMonthlyBudget=old?.defaultMonthlyBudget?:0L,defaultPaymentSourceId=valid)) }
-    fun loadPaymentSources() = db.referenceData().loadPaymentSources().map { PaymentSource(it.id,it.name,runCatching{PaymentSourceType.valueOf(it.type)}.getOrDefault(PaymentSourceType.OTHER)) }
-    fun savePaymentSources(items: List<PaymentSource>) = db.runInTransaction { val dao=db.referenceData(); val removed=dao.loadPaymentSources().filter { old -> items.none { it.id==old.id } };removed.forEach { dao.deletePaymentSource(it.id) }; dao.upsertPaymentSources(items.mapIndexed { i,v -> PaymentSourceEntity(v.id,v.name,v.type.name,i) });val settings=db.monthlyState().loadBudgetSettings();if(settings != null && settings.defaultPaymentSourceId in removed.map{it.id})db.monthlyState().upsertBudgetSettings(settings.copy(defaultPaymentSourceId=null)) }
+    fun loadPaymentSources() = db.referenceData().loadPaymentSources().map { PaymentSource(it.id,it.name,runCatching{PaymentSourceType.valueOf(it.type)}.getOrDefault(PaymentSourceType.OTHER),it.colorKey) }
+    fun savePaymentSources(items: List<PaymentSource>) = db.runInTransaction { val dao=db.referenceData(); val removed=dao.loadPaymentSources().filter { old -> items.none { it.id==old.id } };removed.forEach { dao.deletePaymentSource(it.id) }; dao.upsertPaymentSources(items.mapIndexed { i,v -> PaymentSourceEntity(v.id,v.name,v.type.name,i,colorKey=v.colorKey) });val settings=db.monthlyState().loadBudgetSettings();if(settings != null && settings.defaultPaymentSourceId in removed.map{it.id})db.monthlyState().upsertBudgetSettings(settings.copy(defaultPaymentSourceId=null)) }
     fun loadLockedMonths() = db.monthlyState().loadLocks().map { it.month }.toSet()
     fun saveLockedMonths(items:Set<String>) = db.runInTransaction { db.monthlyState().deleteLocks(); db.monthlyState().upsertLocks(items.map { MonthlyLockEntity(it,System.currentTimeMillis()) }) }
     fun loadImportedFileHashes() = db.statements().loadFingerprints().map { it.fingerprint }.toSet()

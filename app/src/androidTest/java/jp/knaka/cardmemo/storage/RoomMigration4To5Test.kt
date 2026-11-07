@@ -44,7 +44,7 @@ class RoomMigration4To5Test {
 
     @Test fun preservesCategoriesTransactionsRecurringAndReferences(){
         createV4()
-        val room=Room.databaseBuilder(context,RecoFiDatabase::class.java,name).addMigrations(RecoFiDatabase.MIGRATION_4_5).allowMainThreadQueries().build()
+        val room=Room.databaseBuilder(context,RecoFiDatabase::class.java,name).addMigrations(RecoFiDatabase.MIGRATION_4_5,RecoFiDatabase.MIGRATION_5_6).allowMainThreadQueries().build()
         val category=room.referenceData().loadCategories().single()
         assertEquals(stableCategoryId("外食"),category.id)
         assertEquals("外食",category.name)
@@ -62,7 +62,7 @@ class RoomMigration4To5Test {
         assertEquals(transaction.id,match.transactionId)
         room.openHelper.writableDatabase.query("PRAGMA foreign_key_check").use { assertEquals(false,it.moveToFirst()) }
         room.close()
-        val reopened=Room.databaseBuilder(context,RecoFiDatabase::class.java,name).addMigrations(RecoFiDatabase.MIGRATION_4_5).allowMainThreadQueries().build()
+        val reopened=Room.databaseBuilder(context,RecoFiDatabase::class.java,name).addMigrations(RecoFiDatabase.MIGRATION_4_5,RecoFiDatabase.MIGRATION_5_6).allowMainThreadQueries().build()
         assertEquals(1,reopened.referenceData().loadCategories().size)
         assertEquals(1,reopened.transactions().loadAll().size)
         assertEquals(1,reopened.recurringExpenses().loadAll().size)

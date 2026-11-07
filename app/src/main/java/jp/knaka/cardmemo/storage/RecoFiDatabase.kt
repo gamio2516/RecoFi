@@ -16,7 +16,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         MonthlyLockEntity::class, MonthlyBudgetEntity::class,
         AppBudgetSettingsEntity::class,
     ],
-    version = 5,
+    version = 6,
     exportSchema = true,
 )
 abstract class RecoFiDatabase : RoomDatabase() {
@@ -92,9 +92,15 @@ abstract class RecoFiDatabase : RoomDatabase() {
                 check(foreignKeyViolations.isEmpty()) { "外部キー整合性を確認できませんでした: ${foreignKeyViolations.joinToString()}" }
             }
         }
+        val MIGRATION_5_6 = object : Migration(5, 6) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE payment_sources ADD COLUMN colorKey TEXT NOT NULL DEFAULT 'GREEN'")
+                db.execSQL("UPDATE payment_sources SET colorKey='BLUE' WHERE id='rakuten'")
+            }
+        }
         fun open(context: Context): RecoFiDatabase = Room.databaseBuilder(context, RecoFiDatabase::class.java, DATABASE_NAME)
             .allowMainThreadQueries()
-            .addMigrations(MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5)
+            .addMigrations(MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6)
             .build()
     }
 }

@@ -53,6 +53,15 @@ class ReconciliationRepositoryTest {
         assertEquals(first?.matchSource, second?.matchSource)
     }
 
+    @Test fun `automatic matching ignores merchant when date and amount match`() {
+        val differentlyNamed = tx(merchant = "手入力側の取引先")
+        persist(differentlyNamed)
+        repository.autoMatch("hash", "card", listOf(differentlyNamed))
+        val match = db.reconciliation().loadMatch(101)!!
+        assertEquals(1L, match.transactionId)
+        assertEquals(ReconciliationStatus.SUGGESTED.name, match.status)
+    }
+
     @Test fun `confirmed user match survives automatic rerun`() {
         db.transactions().upsertAll(listOf(TransactionEntity(1, 1200, "dining", "手動選択", "", usedAt, null, "card")))
         repository.confirm(101, 1)

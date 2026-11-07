@@ -6,7 +6,7 @@ import androidx.room.Index
 import androidx.room.PrimaryKey
 
 @Entity(tableName = "payment_sources", indices = [Index(value = ["name"], unique = true)])
-data class PaymentSourceEntity(@PrimaryKey val id: String, val name: String, val type: String, val sortOrder: Int, val isCard: Boolean = type == "CREDIT_CARD")
+data class PaymentSourceEntity(@PrimaryKey val id: String, val name: String, val type: String, val sortOrder: Int, val isCard: Boolean = type == "CREDIT_CARD", val colorKey: String = "GREEN")
 
 @Entity(tableName = "categories", indices = [Index(value = ["name"], unique = true)])
 data class CategoryEntity(@PrimaryKey val id: String, val name: String, val sortOrder: Int)

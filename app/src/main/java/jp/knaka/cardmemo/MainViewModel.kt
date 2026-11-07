@@ -126,7 +126,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun setDefaultMonthlyBudget(amount: Long) { _defaultMonthlyBudget.value = amount.coerceAtLeast(0); settingsRepository.saveDefaultMonthlyBudget(_defaultMonthlyBudget.value) }
 
     fun addPaymentSource(name: String,type:PaymentSourceType=PaymentSourceType.OTHER) { val clean = name.trim(); if (clean.isNotEmpty() && _paymentSources.value.none { it.name == clean }) { val source = PaymentSource("source_${System.currentTimeMillis()}", clean, type); _paymentSources.value += source; settingsRepository.savePaymentSources(_paymentSources.value) } }
-    fun editPaymentSource(id:String,name:String,type:PaymentSourceType){_paymentSources.value=_paymentSources.value.map{if(it.id==id)it.copy(name=name.trim(),type=type)else it};settingsRepository.savePaymentSources(_paymentSources.value)}
+    fun editPaymentSource(id:String,name:String,type:PaymentSourceType,colorKey:String?=null){_paymentSources.value=_paymentSources.value.map{if(it.id==id)it.copy(name=name.trim(),type=type,colorKey=colorKey?:it.colorKey)else it};settingsRepository.savePaymentSources(_paymentSources.value)}
     fun setDefaultPaymentSource(id:String){if(_paymentSources.value.any{it.id==id}){_defaultPaymentSourceId.value=id;settingsRepository.saveDefaultPaymentSourceId(id)}}
     fun deletePaymentSource(id: String) { if (_paymentSources.value.size > 1 && _transactions.value.none { it.paymentSourceId == id } && _recurringExpenses.value.none { it.paymentSourceId == id }) { _paymentSources.value = _paymentSources.value.filterNot { it.id == id }; settingsRepository.savePaymentSources(_paymentSources.value);if(_defaultPaymentSourceId.value==id)_defaultPaymentSourceId.value=null } }
 
@@ -153,8 +153,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun deleteRecurringExpense(id: Long) {
+        val transactionsWithoutPlan = removeGeneratedTransactions(_transactions.value,id)
         _recurringExpenses.value = _recurringExpenses.value.filterNot { it.id == id }
         settingsRepository.saveRecurringExpenses(_recurringExpenses.value)
+        updateTransactions(transactionsWithoutPlan)
+        refreshReconciliation()
     }
 
     fun duplicateRecurringExpense(id: Long) {

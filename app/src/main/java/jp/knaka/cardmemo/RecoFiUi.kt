@@ -2,6 +2,9 @@ package jp.knaka.cardmemo
 
 import android.os.Bundle
 import android.app.Activity
+import android.view.HapticFeedbackConstants
+import android.view.MotionEvent
+import android.view.ViewConfiguration
 import android.provider.OpenableColumns
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -10,9 +13,8 @@ import androidx.activity.compose.setContent
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
-import androidx.compose.foundation.gestures.scrollBy
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -30,12 +32,10 @@ import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
-import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.TextStyle
@@ -43,7 +43,6 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.compose.ui.zIndex
 import androidx.compose.ui.platform.LocalContext
 import androidx.lifecycle.viewmodel.compose.viewModel
 import java.text.NumberFormat
@@ -53,12 +52,15 @@ import java.time.YearMonth
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 import kotlinx.coroutines.launch
+import kotlin.math.abs
 
 internal val WinterBlue = Color(0xFF173B8F)
 internal val IceBlue = Color(0xFFF3F7FF)
 internal val DeepNavy = Color(0xFF102A67)
 internal val Cyan = Color(0xFF087A63)
 internal val NeutralGray = Color(0xFFE4E9F0)
+private val PaymentSourceColors = linkedMapOf("BLUE" to Color(0xFF315CA8), "GREEN" to Color(0xFF087A63), "RED" to Color(0xFFB23A48), "ORANGE" to Color(0xFFB86118), "PURPLE" to Color(0xFF7651A8), "GRAY" to Color(0xFF58636F))
+private fun paymentSourceColor(key:String)=PaymentSourceColors[key]?:PaymentSourceColors.getValue("GREEN")
 internal val AppTypography = Typography(
     bodyLarge = TextStyle(fontFamily = FontFamily.SansSerif, fontSize = 16.sp),
     bodyMedium = TextStyle(fontFamily = FontFamily.SansSerif, fontSize = 14.sp),
@@ -70,6 +72,29 @@ internal val AppTypography = Typography(
 private val PieColors = listOf(Color(0xFF173B8F), Color(0xFF2F63D8), Color(0xFF0079B8), Color(0xFF318495), Color(0xFF3E7C78), Color(0xFF4D82C8), Color(0xFF2455A6), Color(0xFF66958B))
 
 open class RecoFiActivityHost : ComponentActivity() {
+    private var touchDownX = 0f
+    private var touchDownY = 0f
+    private var touchMoved = false
+
+    override fun dispatchTouchEvent(event: MotionEvent): Boolean {
+        when (event.actionMasked) {
+            MotionEvent.ACTION_DOWN -> {
+                touchDownX = event.x
+                touchDownY = event.y
+                touchMoved = false
+            }
+            MotionEvent.ACTION_MOVE -> {
+                val slop = ViewConfiguration.get(this).scaledTouchSlop
+                if (abs(event.x - touchDownX) > slop || abs(event.y - touchDownY) > slop) touchMoved = true
+            }
+            MotionEvent.ACTION_UP -> if (!touchMoved) {
+                window.decorView.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
+            }
+            MotionEvent.ACTION_CANCEL -> touchMoved = true
+        }
+        return super.dispatchTouchEvent(event)
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         val japaneseLocale = java.util.Locale.JAPAN
@@ -132,7 +157,7 @@ internal fun CardMemoApp(vm: MainViewModel = viewModel()) {
         }
     }
     if (showEntry || editItem != null) {
-        EntryDialog(categories, merchantTemplates, descriptionTemplates, paymentSources, transactions, selectedSourceId, editItem, {requestedSettingsPage=SettingsPage.MERCHANTS;showEntry=false;tab=AppTab.SETTINGS;settingsHomeKey++}, {requestedSettingsPage=SettingsPage.DESCRIPTIONS;showEntry=false;tab=AppTab.SETTINGS;settingsHomeKey++}, onDismiss = { showEntry = false; editItem = null }, onDelete = { id -> vm.deleteTransaction(id); showEntry = false; editItem = null }) { amount, category, merchant, description, date, sourceId ->
+        EntryDialog(categories, merchantTemplates, descriptionTemplates, paymentSources, selectedSourceId, editItem, {requestedSettingsPage=SettingsPage.MERCHANTS;showEntry=false;tab=AppTab.SETTINGS;settingsHomeKey++}, {requestedSettingsPage=SettingsPage.DESCRIPTIONS;showEntry=false;tab=AppTab.SETTINGS;settingsHomeKey++}, onDismiss = { showEntry = false; editItem = null }, onDelete = { id -> vm.deleteTransaction(id); showEntry = false; editItem = null }) { amount, category, merchant, description, date, sourceId ->
             vm.addTransaction(amount, category, merchant, description, date.atStartOfDay(ZoneId.systemDefault()).toInstant().toEpochMilli(), sourceId, editItem?.id)
             showEntry = false; editItem = null
         }
@@ -150,7 +175,8 @@ internal fun CardMemoApp(vm: MainViewModel = viewModel()) {
 @Composable private fun PaymentSourcePicker(sources: List<PaymentSource>, selectedId: String, onSelect: (String) -> Unit) {
     var expanded by remember { mutableStateOf(false) }
     val selected = sources.firstOrNull { it.id == selectedId } ?: sources.firstOrNull()
-    Box { OutlinedButton(onClick = { expanded = true }, modifier = Modifier.fillMaxWidth(), colors = ButtonDefaults.outlinedButtonColors(containerColor = Color(0xFFCDEEDF), contentColor = Color(0xFF087A63)), border = BorderStroke(1.dp, Color(0xFF087A63))) { Text(selected?.name ?: "支払方法", fontWeight = FontWeight.SemiBold) }; DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }, containerColor = Color(0xFFF4F7F6)) { sources.forEach { source -> DropdownMenuItem(text = { Text(source.name) }, onClick = { onSelect(source.id); expanded = false }) } } }
+    val accent=paymentSourceColor(selected?.colorKey.orEmpty())
+    Box { OutlinedButton(onClick = { expanded = true }, modifier = Modifier.fillMaxWidth(), colors = ButtonDefaults.outlinedButtonColors(containerColor = accent.copy(alpha=.12f), contentColor = accent), border = BorderStroke(1.dp, accent)) { Text(selected?.name ?: "支払方法", fontWeight = FontWeight.SemiBold) }; DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }, containerColor = Color(0xFFF4F7F6)) { sources.forEach { source -> DropdownMenuItem(text = { Row(verticalAlignment=Alignment.CenterVertically){Box(Modifier.size(12.dp).background(paymentSourceColor(source.colorKey),RoundedCornerShape(50)));Spacer(Modifier.width(8.dp));Text(source.name)} }, onClick = { onSelect(source.id); expanded = false }) } } }
 }
 
 @Composable private fun DetailsScreen(all: List<Transaction>, sources: List<PaymentSource>, sourceId: String, selectSource: (String) -> Unit, ensure: (YearMonth) -> Unit, toggle: (Long) -> Unit, edit: (Transaction) -> Unit, lockedMonths: Set<String>, reconciliationProgress: Map<String, ReconciliationProgress>, confirmedIds:Set<Long>,suggestedIds:Set<Long>, openTransfer: (YearMonth, String) -> Unit, setLocked: (YearMonth, Boolean) -> Unit, lockBlockers: (YearMonth) -> List<LockBlocker>, addExpense: () -> Unit) {
@@ -158,6 +184,7 @@ internal fun CardMemoApp(vm: MainViewModel = viewModel()) {
     var onlyOpen by remember { mutableStateOf(false) }
     LaunchedEffect(month) { ensure(month) }
     val monthRows = all.forMonth(month).filter { it.paymentSourceId == sourceId }
+    val sourceColor=paymentSourceColor(sources.firstOrNull{it.id==sourceId}?.colorKey.orEmpty())
     val rows = if (onlyOpen) monthRows.filterNot { it.id in confirmedIds } else monthRows
     var lockedWarning by remember { mutableStateOf(false) }
     var lockFailed by remember { mutableStateOf(false) }
@@ -166,10 +193,9 @@ internal fun CardMemoApp(vm: MainViewModel = viewModel()) {
     Column(Modifier.fillMaxSize().padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
         PaymentSourcePicker(sources, sourceId, selectSource)
         MonthHeader(month, { month = month.minusMonths(1) }, { month = month.plusMonths(1) })
-        Card(colors = CardDefaults.cardColors(containerColor = WinterBlue), shape = RoundedCornerShape(22.dp), modifier = Modifier.fillMaxWidth()) { Row(Modifier.fillMaxWidth().padding(18.dp), verticalAlignment = Alignment.CenterVertically) { Column(Modifier.weight(1f)) { Text("この月の利用額", color = Color.White.copy(.78f)); Text(yen(monthRows.sumOf { it.amount }), color = Color.White, fontSize = 32.sp, fontWeight = FontWeight.Bold); Text("${monthRows.size}件 ・ 要確認 ${monthRows.count { it.id !in confirmedIds }}件", color = Color.White.copy(.82f)) }; OutlinedButton(onClick = { openTransfer(month, sourceId) }, border = BorderStroke(1.dp, Color.White.copy(.38f)), colors = ButtonDefaults.outlinedButtonColors(containerColor = Color.White.copy(.10f), contentColor = Color.White), contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp)) { Text("カード明細を取込・照合  ›", fontSize = 11.sp, fontWeight = FontWeight.Bold) } } }
+        Card(colors = CardDefaults.cardColors(containerColor = sourceColor), shape = RoundedCornerShape(22.dp), modifier = Modifier.fillMaxWidth()) { Row(Modifier.fillMaxWidth().padding(18.dp), verticalAlignment = Alignment.CenterVertically) { Column(Modifier.weight(1f)) { Text("この月の利用額", color = Color.White.copy(.78f)); Text(yen(monthRows.sumOf { it.amount }), color = Color.White, fontSize = 32.sp, fontWeight = FontWeight.Bold); Text("${monthRows.size}件 ・ 要確認 ${monthRows.count { it.id !in confirmedIds }}件", color = Color.White.copy(.82f)) }; OutlinedButton(onClick = { openTransfer(month, sourceId) }, border = BorderStroke(1.dp, Color.White.copy(.38f)), colors = ButtonDefaults.outlinedButtonColors(containerColor = Color.White.copy(.10f), contentColor = Color.White), contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp)) { Text("カード明細を取込・照合  ›", fontSize = 11.sp, fontWeight = FontWeight.Bold) } } }
         val progress=reconciliationProgress["$month|$sourceId"]
-        if(sources.firstOrNull{it.id==sourceId}?.isCard==true&&progress==null)EmptyStateCard("カード明細は未取込です","月末にカード明細を取り込むと、RecoFiの記録と照合できます","カード明細を取り込む"){openTransfer(month,sourceId)}
-        else if(progress!=null&&progress.matched>progress.confirmed)EmptyStateCard("確認待ちの候補があります","候補を確認すると、この月を確定できます","候補を確認"){openTransfer(month,sourceId)}
+        if(progress!=null&&progress.matched>progress.confirmed)EmptyStateCard("確認待ちの候補があります","候補を確認すると、この月を確定できます","候補を確認"){openTransfer(month,sourceId)}
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) { Switch(onlyOpen, { onlyOpen = it }); Spacer(Modifier.width(8.dp)); Text("未確認のみ"); Spacer(Modifier.weight(1f)); val isLocked = month.toString() in lockedMonths; TextButton(onClick = { if (isLocked) confirmUnlock = true else { val blockers=lockBlockers(month); if(blockers.isEmpty())setLocked(month,true) else { blockerMessage=blockers.joinToString("\n"){it.message};lockFailed=true } } }, contentPadding = PaddingValues(horizontal = 6.dp)) { Text(if (isLocked) "🔒 確定済み" else "月を確定", color = Color.Gray, fontSize = 11.sp) } }
         Text("${rows.size}件  ${yen(rows.sumOf { it.amount })}", color = DeepNavy, fontWeight = FontWeight.Bold)
         if (rows.isEmpty()) EmptyStateCard("まだ支出がありません", "まずは支出を1件記録しましょう", "最初の支出を記録", addExpense) else LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -192,41 +218,47 @@ internal fun CardMemoApp(vm: MainViewModel = viewModel()) {
     var month by remember { mutableStateOf(YearMonth.now()) }
     val budget = budgets[month.toString()] ?: defaultBudget
     var analysisMode by remember { mutableIntStateOf(0) }
+    var annual by remember { mutableStateOf(false) }
     var detailCategory by remember { mutableStateOf<String?>(null) }
     var detailMerchant by remember { mutableStateOf<String?>(null) }
     var detailDate by remember { mutableStateOf<LocalDate?>(null) }
     val fixedOnly = analysisMode == 1
     val calendarMode = analysisMode == 2
     val merchantMode = analysisMode == 3
+    val supportsAnnual = !fixedOnly && !calendarMode
     LaunchedEffect(month) { ensure(month) }
     val analysis = remember(all, month, fixedOnly) { SpendingAnalysis.calculate(all, month, fixedOnly) }
     val monthRows = analysis.monthRows
-    val analysisRows = analysis.analysisRows
-    val totals = analysis.categoryTotals
-    val total = analysis.total
+    val analysisRows = remember(all, analysis, month, annual, supportsAnnual) { if (annual && supportsAnnual) all.forYear(month.year) else analysis.analysisRows }
+    val previousRows = remember(all, analysis, month, annual, supportsAnnual) { if (annual && supportsAnnual) all.forYear(month.year - 1) else analysis.previousMonthRows }
+    val totals = remember(analysisRows) { analysisRows.groupBy { it.category }.mapValues { it.value.sumOf(Transaction::amount) }.toList().sortedByDescending { it.second } }
+    val total = totals.sumOf { it.second }
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
         TabRow(selectedTabIndex = analysisMode, containerColor = Color.Transparent) { Tab(selected = analysisMode == 0, onClick = { analysisMode = 0 }, text = { Text("全体", maxLines = 1, fontSize = 12.sp) }); Tab(selected = analysisMode == 1, onClick = { analysisMode = 1 }, text = { Text("固定費", maxLines = 1, fontSize = 12.sp) }); Tab(selected = analysisMode == 2, onClick = { analysisMode = 2 }, text = { Text("カレンダー", maxLines = 1, fontSize = 10.sp) }); Tab(selected = analysisMode == 3, onClick = { analysisMode = 3 }, text = { Text("取引先", maxLines = 1, fontSize = 12.sp) }) }
-        MonthHeader(month, { month = month.minusMonths(1) }, { month = month.plusMonths(1) })
-        Text(when { fixedOnly -> "固定費の分析"; merchantMode -> "取引先を軸にした分析"; calendarMode -> "支出カレンダー"; else -> "カテゴリ別支出" }, fontSize = 22.sp, fontWeight = FontWeight.Bold, color = DeepNavy)
+        if (supportsAnnual) Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Center) { FilterChip(selected = !annual, onClick = { annual = false }, label = { Text("月間") }); Spacer(Modifier.width(8.dp)); FilterChip(selected = annual, onClick = { annual = true }, label = { Text("年間") }) }
+        if (annual && supportsAnnual) YearHeader(month.year, { month = month.minusYears(1) }, { month = month.plusYears(1) }) else MonthHeader(month, { month = month.minusMonths(1) }, { month = month.plusMonths(1) })
+        Text(when { fixedOnly -> "固定費の分析"; merchantMode -> if (annual) "${month.year}年の取引先分析" else "取引先を軸にした分析"; calendarMode -> "支出カレンダー"; annual -> "${month.year}年のカテゴリ別支出"; else -> "カテゴリ別支出" }, fontSize = 22.sp, fontWeight = FontWeight.Bold, color = DeepNavy)
         if (calendarMode) {
             SpendingCalendar(month, monthRows) { detailDate = it }
         } else if (merchantMode) {
-            MerchantAnalysis(analysisRows, analysis.previousMonthRows) { detailMerchant = it }
+            MerchantAnalysis(analysisRows, previousRows, annual) { detailMerchant = it }
         } else {
-        if (budget <= 0) EmptyStateCard("月間予算が未設定です","予算を登録すると、使用状況を比較できます","月間予算を設定",setBudget)
-        if (total == 0L && budget <= 0L) EmptyStateCard("分析データがありません","支出を記録すると分析が表示されます","支出を記録",recordExpense) else {
+        if (!annual && budget <= 0) EmptyStateCard("月間予算が未設定です","予算を登録すると、使用状況を比較できます","月間予算を設定",setBudget)
+        if (total == 0L && (annual || budget <= 0L)) EmptyStateCard("分析データがありません","支出を記録すると分析が表示されます","支出を記録",recordExpense) else {
             Box(Modifier.fillMaxWidth().height(245.dp), contentAlignment = Alignment.Center) {
-                Canvas(Modifier.size(220.dp)) { val denominator = maxOf(budget, total, 1L); drawArc(Color(0xFFE3E6ED), -90f, 360f, useCenter = false, style = Stroke(42f, cap = StrokeCap.Butt)); var start = -90f; totals.forEachIndexed { index, entry -> val remaining = (360f - (start + 90f)).coerceAtLeast(0f); val sweep = (entry.second.toFloat() / denominator * 360f).coerceAtMost(remaining); if (sweep > 0) drawArc(PieColors[index % PieColors.size], start, sweep, useCenter = false, style = Stroke(42f, cap = StrokeCap.Butt)); start += sweep } }
-                Column(horizontalAlignment = Alignment.CenterHorizontally) { val overBudget = budget > 0 && total > budget; val emphasizeOver = overBudget && !fixedOnly; if (overBudget) Text("予算オーバー", color = Color(0xFFFF1738), fontSize = 15.sp, fontWeight = FontWeight.ExtraBold); Text("現在の支出", color = Color.Gray, fontSize = 12.sp, fontWeight = FontWeight.Normal); Text(yen(total), fontSize = 22.sp, fontWeight = FontWeight.Bold, color = if (emphasizeOver) Color(0xFFFF1738) else DeepNavy); if (budget > 0) { Text("予算比 ${total * 100 / budget}%", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = if (emphasizeOver) Color(0xFFFF1738) else DeepNavy); Text("予算 ${yen(budget)}", fontSize = 11.sp, color = Color(0xFF202124)) } }
+                Canvas(Modifier.size(220.dp)) { val denominator = if (annual) maxOf(total, 1L) else maxOf(budget, total, 1L); drawArc(Color(0xFFE3E6ED), -90f, 360f, useCenter = false, style = Stroke(42f, cap = StrokeCap.Butt)); var start = -90f; totals.forEachIndexed { index, entry -> val remaining = (360f - (start + 90f)).coerceAtLeast(0f); val sweep = (entry.second.toFloat() / denominator * 360f).coerceAtMost(remaining); if (sweep > 0) drawArc(PieColors[index % PieColors.size], start, sweep, useCenter = false, style = Stroke(42f, cap = StrokeCap.Butt)); start += sweep } }
+                Column(horizontalAlignment = Alignment.CenterHorizontally) { val overBudget = !annual && budget > 0 && total > budget; val emphasizeOver = overBudget && !fixedOnly; if (overBudget) Text("予算オーバー", color = Color(0xFFFF1738), fontSize = 15.sp, fontWeight = FontWeight.ExtraBold); Text(if (annual) "年間支出" else "現在の支出", color = Color.Gray, fontSize = 12.sp, fontWeight = FontWeight.Normal); Text(yen(total), fontSize = 22.sp, fontWeight = FontWeight.Bold, color = if (emphasizeOver) Color(0xFFFF1738) else DeepNavy); if (!annual && budget > 0) { Text("予算比 ${total * 100 / budget}%", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = if (emphasizeOver) Color(0xFFFF1738) else DeepNavy); Text("予算 ${yen(budget)}", fontSize = 11.sp, color = Color(0xFF202124)) } }
             }
             totals.forEachIndexed { index, (category, amount) -> Card(Modifier.fillMaxWidth().clickable { detailCategory = category }, colors = CardDefaults.cardColors(containerColor = Color.White)) { Row(Modifier.fillMaxWidth().padding(12.dp), verticalAlignment = Alignment.CenterVertically) { Box(Modifier.size(14.dp).background(PieColors[index % PieColors.size], RoundedCornerShape(3.dp))); Spacer(Modifier.width(10.dp)); Text(category, Modifier.weight(1f)); Text("${if (fixedOnly && budget > 0) amount * 100 / budget else if(total > 0) amount * 100 / total else 0}%", fontWeight = FontWeight.SemiBold, color = if (fixedOnly) DeepNavy else Color(0xFF202124)); Spacer(Modifier.width(8.dp)); Text(yen(amount), fontWeight = FontWeight.SemiBold); Spacer(Modifier.width(6.dp)); Text("›", color = WinterBlue) } } }
         }
         }
     }
     detailCategory?.let { category -> TransactionDetailDialog("$category の明細", analysisRows.filter { it.category == category }, { detailCategory = null }) }
-    detailMerchant?.let { normalized -> TransactionDetailDialog("取引先別の明細", analysisRows.filter { normalizeForLearning(it.merchant) == normalized }, { detailMerchant = null }) }
+    detailMerchant?.let { normalized -> TransactionDetailDialog(if (annual) "${month.year}年の取引先明細" else "取引先別の明細", analysisRows.filter { normalizeForLearning(it.merchant) == normalized }, { detailMerchant = null }) }
     detailDate?.let { date -> TransactionDetailDialog("${date.monthValue}月${date.dayOfMonth}日の明細", monthRows.filter { Instant.ofEpochMilli(it.usedAt).atZone(ZoneId.systemDefault()).toLocalDate() == date }, { detailDate = null }) }
 }
+
+@Composable private fun YearHeader(year:Int,previous:()->Unit,next:()->Unit){Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.SpaceBetween,verticalAlignment=Alignment.CenterVertically){OutlinedButton(onClick=previous){Text("‹")};Text("${year}年",fontSize=20.sp,fontWeight=FontWeight.Bold,color=DeepNavy);OutlinedButton(onClick=next){Text("›")}}}
 
 @Composable private fun SpendingCalendar(month: YearMonth, rows: List<Transaction>, openDay: (LocalDate) -> Unit) {
     val daily = rows.groupBy { Instant.ofEpochMilli(it.usedAt).atZone(ZoneId.systemDefault()).toLocalDate() }.mapValues { it.value.sumOf(Transaction::amount) }
@@ -519,7 +551,7 @@ internal fun CardMemoApp(vm: MainViewModel = viewModel()) {
     if (confirmUnlock) AlertDialog(onDismissRequest = { confirmUnlock = false }, title = { Text("月次ロックを解除しますか？") }, text = { Text("解除すると、この月の家計データを再び変更できるようになります。") }, confirmButton = { Button(onClick = { setLocked(month, false); confirmUnlock = false }) { Text("解除する") } }, dismissButton = { TextButton(onClick = { confirmUnlock = false }) { Text("キャンセル") } })
 }
 
-@Composable private fun PaymentSourceSettings(sources: List<PaymentSource>, defaultSourceId:String?, setDefault:(String)->Unit, add: (String, PaymentSourceType) -> Unit, edit: (String, String, PaymentSourceType) -> Unit, delete: (String) -> Unit) {
+@Composable private fun PaymentSourceSettings(sources: List<PaymentSource>, defaultSourceId:String?, setDefault:(String)->Unit, add: (String, PaymentSourceType) -> Unit, edit: (String, String, PaymentSourceType, String?) -> Unit, delete: (String) -> Unit) {
     var name by remember { mutableStateOf("") }
     var type by remember { mutableStateOf(PaymentSourceType.CREDIT_CARD) }
     var expanded by remember { mutableStateOf(false) }
@@ -528,7 +560,7 @@ internal fun CardMemoApp(vm: MainViewModel = viewModel()) {
         OutlinedTextField(name, { name = it }, label = { Text("カード名・支払方法名") }, modifier = Modifier.fillMaxWidth())
         Box { OutlinedButton({ expanded = true }, Modifier.fillMaxWidth()) { Text("種類：${paymentSourceTypeLabel(type)}") }; DropdownMenu(expanded, { expanded = false }) { PaymentSourceType.entries.forEach { candidate -> DropdownMenuItem({ Text(paymentSourceTypeLabel(candidate)) }, { type = candidate; expanded = false }) } } }
         Button(enabled = name.trim().isNotEmpty(), onClick = { add(name, type); name = "" }, modifier = Modifier.fillMaxWidth()) { Text("追加") }
-        LazyColumn(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(8.dp)) { items(sources, key = { it.id }) { source -> var itemExpanded by remember(source.id) { mutableStateOf(false) }; Card(Modifier.fillMaxWidth()) { Column(Modifier.padding(12.dp)) { Row(verticalAlignment=Alignment.CenterVertically){Text(source.name, fontWeight = FontWeight.SemiBold,modifier=Modifier.weight(1f));if(source.id==defaultSourceId)Text("デフォルト",color=WinterBlue,fontSize=12.sp,fontWeight=FontWeight.Bold)}; Row(verticalAlignment = Alignment.CenterVertically) { Box(Modifier.weight(1f)) { TextButton({ itemExpanded = true }) { Text("種類：${paymentSourceTypeLabel(source.type)}") }; DropdownMenu(itemExpanded, { itemExpanded = false }) { PaymentSourceType.entries.forEach { candidate -> DropdownMenuItem({ Text(paymentSourceTypeLabel(candidate)) }, { edit(source.id, source.name, candidate); itemExpanded = false }) } } };if(source.id!=defaultSourceId)TextButton(onClick={setDefault(source.id)}){Text("デフォルトに設定")}; TextButton(onClick = { delete(source.id) }) { Text("削除") } } } } } }
+        LazyColumn(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(8.dp)) { items(sources, key = { it.id }) { source -> var itemExpanded by remember(source.id) { mutableStateOf(false) }; Card(Modifier.fillMaxWidth()) { Column(Modifier.padding(12.dp),verticalArrangement=Arrangement.spacedBy(6.dp)) { Row(verticalAlignment=Alignment.CenterVertically){Box(Modifier.size(14.dp).background(paymentSourceColor(source.colorKey),RoundedCornerShape(50)));Spacer(Modifier.width(8.dp));Text(source.name, fontWeight = FontWeight.SemiBold,modifier=Modifier.weight(1f));if(source.id==defaultSourceId)Text("デフォルト",color=WinterBlue,fontSize=12.sp,fontWeight=FontWeight.Bold)}; Row(verticalAlignment = Alignment.CenterVertically) { Box(Modifier.weight(1f)) { TextButton({ itemExpanded = true }) { Text("種類：${paymentSourceTypeLabel(source.type)}") }; DropdownMenu(itemExpanded, { itemExpanded = false }) { PaymentSourceType.entries.forEach { candidate -> DropdownMenuItem({ Text(paymentSourceTypeLabel(candidate)) }, { edit(source.id, source.name, candidate, null); itemExpanded = false }) } } };if(source.id!=defaultSourceId)TextButton(onClick={setDefault(source.id)}){Text("デフォルトに設定")}; TextButton(onClick = { delete(source.id) }) { Text("削除") } };Text("表示色",fontSize=12.sp,color=Color.Gray);Row(horizontalArrangement=Arrangement.spacedBy(12.dp)){PaymentSourceColors.forEach{(key,color)->Box(Modifier.size(30.dp).background(color,RoundedCornerShape(50)).then(if(source.colorKey==key)Modifier.border(3.dp,Color.White,RoundedCornerShape(50)).border(1.dp,DeepNavy,RoundedCornerShape(50)) else Modifier).clickable{edit(source.id,source.name,source.type,key)})}} } } } }
     }
 }
 
@@ -563,78 +595,18 @@ private fun paymentSourceTypeLabel(type: PaymentSourceType) = when (type) { Paym
 
 @Composable private fun ReorderableStringList(values: List<String>, modifier: Modifier = Modifier, saveOrder: (List<String>) -> Unit, content: @Composable (String) -> Unit) {
     var localValues by remember { mutableStateOf(values) }
-    var draggedItem by remember { mutableStateOf<String?>(null) }
-    var dragOffset by remember { mutableFloatStateOf(0f) }
-    var dragCenter by remember { mutableFloatStateOf(0f) }
-    var autoScrollSpeed by remember { mutableFloatStateOf(0f) }
     val listState = rememberLazyListState()
-    val edgeSize = with(androidx.compose.ui.platform.LocalDensity.current) { 72.dp.toPx() }
-
-    LaunchedEffect(values, draggedItem) { if (draggedItem == null) localValues = values }
-    LaunchedEffect(draggedItem, autoScrollSpeed) {
-        while (draggedItem != null && autoScrollSpeed != 0f) {
-            listState.scrollBy(autoScrollSpeed)
-            kotlinx.coroutines.delay(16)
-            val item = draggedItem ?: break
-            val layout = listState.layoutInfo
-            val currentInfo = layout.visibleItemsInfo.firstOrNull { it.key == item } ?: continue
-            val targetInfo = layout.visibleItemsInfo.minByOrNull { kotlin.math.abs((it.offset + it.size / 2f) - dragCenter) }
-            val from = localValues.indexOf(item)
-            val to = targetInfo?.index ?: from
-            if (from >= 0 && to in localValues.indices && from != to) localValues = moveItem(localValues, from, to)
-            listState.layoutInfo.visibleItemsInfo.firstOrNull { it.key == item }?.let { dragOffset = dragCenter - (it.offset + it.size / 2f) }
-        }
-    }
+    LaunchedEffect(values) { localValues = values }
 
     LazyColumn(modifier, state = listState, verticalArrangement = Arrangement.spacedBy(8.dp), contentPadding = PaddingValues(bottom = 20.dp)) {
-        itemsIndexed(localValues, key = { _, item -> item }) { _, item ->
-            val dragging = draggedItem == item
-            Card(
-                Modifier.fillMaxWidth().zIndex(if (dragging) 1f else 0f).graphicsLayer { translationY = if (dragging) dragOffset else 0f },
-                elevation = CardDefaults.cardElevation(defaultElevation = if (dragging) 8.dp else 1.dp),
-            ) {
+        itemsIndexed(localValues, key = { _, item -> item }) { index, item ->
+            Card(Modifier.fillMaxWidth(), elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Box(Modifier.weight(1f)) { content(item) }
-                    Box(
-                        Modifier.widthIn(min = 56.dp).heightIn(min = 56.dp).background(WinterBlue.copy(alpha = if (dragging) .16f else .07f), RoundedCornerShape(12.dp)).pointerInput(item) {
-                            detectDragGesturesAfterLongPress(
-                                onDragStart = {
-                                    draggedItem = item
-                                    dragOffset = 0f
-                                    listState.layoutInfo.visibleItemsInfo.firstOrNull { it.key == item }?.let { dragCenter = it.offset + it.size / 2f }
-                                },
-                                onDrag = { change, amount ->
-                                    change.consume()
-                                    dragOffset += amount.y
-                                    dragCenter += amount.y
-                                    val layout = listState.layoutInfo
-                                    val currentInfo = layout.visibleItemsInfo.firstOrNull { it.key == item } ?: return@detectDragGesturesAfterLongPress
-                                    val targetInfo = layout.visibleItemsInfo.minByOrNull { kotlin.math.abs((it.offset + it.size / 2f) - dragCenter) }
-                                    val from = localValues.indexOf(item)
-                                    val to = targetInfo?.index ?: from
-                                    if (from >= 0 && to in localValues.indices && from != to) {
-                                        localValues = moveItem(localValues, from, to)
-                                    }
-                                    val viewportStart = layout.viewportStartOffset.toFloat()
-                                    val viewportEnd = layout.viewportEndOffset.toFloat()
-                                    autoScrollSpeed = when {
-                                        dragCenter < viewportStart + edgeSize -> -((viewportStart + edgeSize - dragCenter) / edgeSize * 32f).coerceAtLeast(8f)
-                                        dragCenter > viewportEnd - edgeSize -> ((dragCenter - (viewportEnd - edgeSize)) / edgeSize * 32f).coerceAtLeast(8f)
-                                        else -> 0f
-                                    }
-                                },
-                                onDragEnd = {
-                                    val result = localValues
-                                    draggedItem = null
-                                    dragOffset = 0f
-                                    autoScrollSpeed = 0f
-                                    if (result != values) saveOrder(result)
-                                },
-                                onDragCancel = { draggedItem = null; dragOffset = 0f; autoScrollSpeed = 0f; localValues = values },
-                            )
-                        },
-                        contentAlignment = Alignment.Center,
-                    ) { Text("☰", fontSize = 26.sp, color = WinterBlue, fontWeight = FontWeight.Bold) }
+                    Column(Modifier.padding(end = 6.dp)) {
+                        FilledTonalIconButton(enabled = index > 0, onClick = { localValues = moveItem(localValues,index,index-1); saveOrder(localValues) }, modifier = Modifier.size(38.dp)) { Text("↑", fontSize = 20.sp, fontWeight = FontWeight.Bold) }
+                        FilledTonalIconButton(enabled = index < localValues.lastIndex, onClick = { localValues = moveItem(localValues,index,index+1); saveOrder(localValues) }, modifier = Modifier.size(38.dp)) { Text("↓", fontSize = 20.sp, fontWeight = FontWeight.Bold) }
+                    }
                 }
             }
         }
@@ -647,24 +619,24 @@ private fun paymentSourceTypeLabel(type: PaymentSourceType) = when (type) { Paym
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(10.dp)) {
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) { Column(Modifier.weight(1f)) { Text("固定費の設定", fontSize = 22.sp, fontWeight = FontWeight.Bold, color = DeepNavy); Text(if (showArchive) "終了済みの固定費" else "タップで編集できます", color = Color.Gray, fontSize = 13.sp) }; if (!showArchive) Button(onClick = { editing = null; showDialog = true }) { Text("追加") } }
         TabRow(selectedTabIndex = if (showArchive) 1 else 0, containerColor = Color.Transparent) { Tab(selected = !showArchive, onClick = { showArchive = false }, text = { Text("契約中") }); Tab(selected = showArchive, onClick = { showArchive = true }, text = { Text("アーカイブ") }) }
-        if (visibleRows.isEmpty()) { if(showArchive)EmptyMessage("アーカイブはありません") else EmptyStateCard("固定費はまだありません","サブスクや定期支払いを登録できます","固定費を追加"){editing=null;showDialog=true} } else visibleRows.forEach { item -> Card(Modifier.fillMaxWidth().clickable { editing = item; showDialog = true }) { Column(Modifier.padding(14.dp)) { Text(item.merchant.ifBlank { item.description.ifBlank { item.category } }, fontWeight = FontWeight.Bold); if(item.description.isNotBlank()) Text(item.description, color = Color.Gray, fontSize = 12.sp); Text("${item.contractDate.replace('-', '/')}契約 ・ ${intervalLabel(item.intervalMonths)}・毎月${item.paymentDay}日支払", color = Color.Gray, fontSize = 12.sp); Text("${item.category}  ${yen(item.priceRevisions.lastOrNull()?.amount ?: item.amount)}${item.endDate?.let { " ・ ${it.replace('-', '/')}終了" }.orEmpty()}", color = Color.Gray, fontSize = 13.sp); Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) { TextButton(onClick = { duplicate(item.id) }) { Text("複製") }; TextButton(onClick = { deleteCandidate = item }) { Text("削除") } } } } }
+        if (visibleRows.isEmpty()) { if(showArchive)EmptyMessage("アーカイブはありません") else EmptyStateCard("固定費はまだありません","サブスクや定期支払いを登録できます","固定費を追加"){editing=null;showDialog=true} } else visibleRows.forEach { item -> Card(Modifier.fillMaxWidth().clickable { editing = item; showDialog = true }) { Column(Modifier.padding(14.dp)) { Text(item.merchant.ifBlank { item.description.ifBlank { item.category } }, fontWeight = FontWeight.Bold); if(item.description.isNotBlank()) Text(item.description, color = Color.Gray, fontSize = 12.sp); Text("${item.contractDate.replace('-', '/')}契約 ・ ${intervalLabel(item.intervalMonths)}・${recurringPaymentDayLabel(item.intervalMonths,item.paymentDay)}", color = Color.Gray, fontSize = 12.sp); Text("${item.category}  ${yen(item.priceRevisions.lastOrNull()?.amount ?: item.amount)}${item.endDate?.let { " ・ ${it.replace('-', '/')}終了" }.orEmpty()}", color = Color.Gray, fontSize = 13.sp); Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) { TextButton(onClick = { duplicate(item.id) }) { Text("複製") }; TextButton(onClick = { deleteCandidate = item }) { Text("削除") } } } } }
     }
     if (showDialog) RecurringDialog(categories, sources, defaultSourceId, editing, { showDialog = false; editing = null }, { id, date -> endContract(id, date); editing = editing?.copy(endDate = date.toString()) }, { id, date, amount -> revisePrice(id, date, amount); editing = editing?.copy(priceRevisions = editing!!.priceRevisions + PriceRevision(date.toString(), amount)) }) { id, amount, day, category, merchant, description, contractDate, sourceId, interval -> save(id, amount, day, category, merchant, description, contractDate, sourceId, interval); showDialog = false; editing = null }
-    deleteCandidate?.let { item -> ConfirmDeleteDialog("固定費を削除しますか？", item.merchant.ifBlank { item.category }, { deleteCandidate = null }) { delete(item.id); deleteCandidate = null } }
+    deleteCandidate?.let { item -> ConfirmDeleteDialog("固定費を削除しますか？", "${item.merchant.ifBlank { item.category }}\nこの固定費から自動作成された明細も削除されます。", { deleteCandidate = null }) { delete(item.id); deleteCandidate = null } }
 }
 
 @Composable private fun RecurringDialog(categories: List<String>, sources: List<PaymentSource>, defaultSourceId:String?, existing: RecurringExpense?, dismiss: () -> Unit, endContract: (Long, LocalDate) -> Unit, revisePrice: (Long, LocalDate, Long) -> Unit, save: (Long?, Long, Int, String, String, String, LocalDate, String, Int) -> Unit) {
     var amount by remember(existing) { mutableStateOf(existing?.amount?.toString().orEmpty()) }; var day by remember(existing) { mutableIntStateOf(existing?.paymentDay ?: 1) }; var merchant by remember(existing) { mutableStateOf(existing?.merchant.orEmpty()) }; var description by remember(existing) { mutableStateOf(existing?.description.orEmpty()) }; var contractDate by remember(existing) { mutableStateOf(existing?.contractDate?.let(LocalDate::parse) ?: LocalDate.now()) }; var category by remember(existing, categories) { mutableStateOf(existing?.category ?: categories.firstOrNull().orEmpty()) }; var categoryExpanded by remember { mutableStateOf(false) }; var dayExpanded by remember { mutableStateOf(false) }; var intervalExpanded by remember { mutableStateOf(false) }; var interval by remember(existing) { mutableIntStateOf(existing?.intervalMonths ?: 1) }; var sourceId by remember(existing, sources, defaultSourceId) { mutableStateOf(existing?.paymentSourceId ?: defaultSourceId?.takeIf { id->sources.any{it.id==id} } ?: sources.firstOrNull()?.id.orEmpty()) }; var showEnd by remember { mutableStateOf(false) }; var showRevision by remember { mutableStateOf(false) }
-    AlertDialog(modifier=Modifier.imePadding(),onDismissRequest = dismiss, title = { Text(if (existing == null) "固定費を追加" else "固定費を編集") }, text = { LazyColumn(Modifier.fillMaxWidth().heightIn(max=520.dp), verticalArrangement = Arrangement.spacedBy(8.dp), contentPadding = PaddingValues(bottom = 8.dp)) { item { PaymentSourcePicker(sources, sourceId) { sourceId = it } }; item { Box { OutlinedButton(onClick = { categoryExpanded = true }, modifier = Modifier.fillMaxWidth()) { Text(category.ifBlank { "支出カテゴリを選択" }) }; DropdownMenu(categoryExpanded, { categoryExpanded = false }) { categories.forEach { DropdownMenuItem({ Text(it) }, { category = it; categoryExpanded = false }) } } } }; item { DatePickerField("契約日",contractDate){contractDate=it} }; item { Box { OutlinedButton(onClick = { intervalExpanded = true }, modifier = Modifier.fillMaxWidth()) { Text("支払い間隔：${intervalLabel(interval)}") }; DropdownMenu(intervalExpanded, { intervalExpanded = false }, modifier = Modifier.heightIn(max = 320.dp)) { (1..120).forEach { candidate -> DropdownMenuItem({ Text(intervalLabel(candidate)) }, { interval = candidate; intervalExpanded = false }) } } } }; item { Box { OutlinedButton(onClick = { dayExpanded = true }, modifier = Modifier.fillMaxWidth()) { Text("支払日：毎月${day}日") }; DropdownMenu(dayExpanded, { dayExpanded = false }, modifier = Modifier.heightIn(max = 280.dp)) { (1..31).forEach { candidate -> DropdownMenuItem({ Text("毎月${candidate}日") }, { day = candidate; dayExpanded = false }) } } } }; item { OutlinedTextField(amount, { amount = it.filter(Char::isDigit) }, label = { Text(RECURRING_AMOUNT_LABEL) }, modifier = Modifier.fillMaxWidth(), keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number)) }; item { OutlinedTextField(merchant, { merchant = it }, label = { Text("取引先") }, modifier = Modifier.fillMaxWidth()) }; item { OutlinedTextField(description, { description = it }, label = { Text("内容") }, modifier = Modifier.fillMaxWidth()) }; if (existing != null) item { Column(verticalArrangement = Arrangement.spacedBy(8.dp)) { HorizontalDivider(); Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) { OutlinedButton(onClick = { showEnd = true }, modifier = Modifier.weight(1f)) { Text("契約終了") }; OutlinedButton(onClick = { showRevision = true }, modifier = Modifier.weight(1f)) { Text("料金改定") } } } } } }, confirmButton = { Button(enabled = amount.toLongOrNull() != null && category in categories && sourceId.isNotBlank(), onClick = { save(existing?.id, amount.toLong(), day, category, merchant, description, contractDate, sourceId, interval) }) { Text("保存") } }, dismissButton = { TextButton(onClick = dismiss) { Text("キャンセル") } })
+    AlertDialog(modifier=Modifier.imePadding(),onDismissRequest = dismiss, title = { Text(if (existing == null) "固定費を追加" else "固定費を編集") }, text = { LazyColumn(Modifier.fillMaxWidth().heightIn(max=520.dp), verticalArrangement = Arrangement.spacedBy(8.dp), contentPadding = PaddingValues(bottom = 8.dp)) { item { PaymentSourcePicker(sources, sourceId) { sourceId = it } }; item { Box { OutlinedButton(onClick = { categoryExpanded = true }, modifier = Modifier.fillMaxWidth()) { Text(category.ifBlank { "支出カテゴリを選択" }) }; DropdownMenu(categoryExpanded, { categoryExpanded = false }) { categories.forEach { DropdownMenuItem({ Text(it) }, { category = it; categoryExpanded = false }) } } } }; item { DatePickerField("契約日",contractDate){contractDate=it} }; item { Box { OutlinedButton(onClick = { intervalExpanded = true }, modifier = Modifier.fillMaxWidth()) { Text("支払い間隔：${intervalLabel(interval)}") }; DropdownMenu(intervalExpanded, { intervalExpanded = false }, modifier = Modifier.heightIn(max = 320.dp)) { (1..120).forEach { candidate -> DropdownMenuItem({ Text(intervalLabel(candidate)) }, { interval = candidate; intervalExpanded = false }) } } } }; item { Box { OutlinedButton(onClick = { dayExpanded = true }, modifier = Modifier.fillMaxWidth()) { Text("支払日：${recurringPaymentDayLabel(interval,day)}") }; DropdownMenu(dayExpanded, { dayExpanded = false }, modifier = Modifier.heightIn(max = 280.dp)) { (1..31).forEach { candidate -> DropdownMenuItem({ Text(recurringPaymentDayLabel(interval,candidate)) }, { day = candidate; dayExpanded = false }) } } } }; item { OutlinedTextField(amount, { amount = it.filter(Char::isDigit) }, label = { Text(RECURRING_AMOUNT_LABEL) }, modifier = Modifier.fillMaxWidth(), keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number)) }; item { OutlinedTextField(merchant, { merchant = it }, label = { Text("取引先") }, modifier = Modifier.fillMaxWidth()) }; item { OutlinedTextField(description, { description = it }, label = { Text("内容") }, modifier = Modifier.fillMaxWidth()) }; if (existing != null) item { Column(verticalArrangement = Arrangement.spacedBy(8.dp)) { HorizontalDivider(); Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) { OutlinedButton(onClick = { showEnd = true }, modifier = Modifier.weight(1f)) { Text("契約終了") }; OutlinedButton(onClick = { showRevision = true }, modifier = Modifier.weight(1f)) { Text("料金改定") } } } } } }, confirmButton = { Button(enabled = amount.toLongOrNull() != null && category in categories && sourceId.isNotBlank(), onClick = { save(existing?.id, amount.toLong(), day, category, merchant, description, contractDate, sourceId, interval) }) { Text("保存") } }, dismissButton = { TextButton(onClick = dismiss) { Text("キャンセル") } })
     if (showEnd && existing != null) DateAmountActionDialog("契約終了日", false, existing.endDate ?: LocalDate.now().toString(), "", { showEnd = false }) { date, _ -> endContract(existing.id, date); showEnd = false }
     if (showRevision && existing != null) DateAmountActionDialog("料金改定", true, LocalDate.now().toString(), existing.priceRevisions.lastOrNull()?.amount?.toString() ?: existing.amount.toString(), { showRevision = false }) { date, revised -> revisePrice(existing.id, date, revised); showRevision = false }
 }
 
 @OptIn(ExperimentalLayoutApi::class, ExperimentalMaterial3Api::class)
-@Composable private fun EntryDialog(categories: List<String>, merchants: List<String>, descriptions: List<String>, sources: List<PaymentSource>, history: List<Transaction>, defaultSourceId: String, existing: Transaction?, openMerchantSettings:()->Unit,openDescriptionSettings:()->Unit,onDismiss: () -> Unit, onDelete: (Long) -> Unit, save: (Long, String, String, String, LocalDate, String) -> Unit) {
+@Composable private fun EntryDialog(categories: List<String>, merchants: List<String>, descriptions: List<String>, sources: List<PaymentSource>, defaultSourceId: String, existing: Transaction?, openMerchantSettings:()->Unit,openDescriptionSettings:()->Unit,onDismiss: () -> Unit, onDelete: (Long) -> Unit, save: (Long, String, String, String, LocalDate, String) -> Unit) {
+    val suggestions = emptyList<String>()
     var amount by remember(existing) { mutableStateOf(existing?.amount?.toString().orEmpty()) }; var merchant by remember(existing) { mutableStateOf(existing?.merchant.orEmpty()) }; var description by remember(existing) { mutableStateOf(existing?.description.orEmpty()) }; var category by remember(existing, categories) { mutableStateOf(existing?.category ?: categories.firstOrNull().orEmpty()) }; var expanded by remember { mutableStateOf(false) }; var date by remember(existing) { mutableStateOf(existing?.let { Instant.ofEpochMilli(it.usedAt).atZone(ZoneId.systemDefault()).toLocalDate() } ?: LocalDate.now()) }; var showDatePicker by remember { mutableStateOf(false) }; var showDeleteConfirm by remember { mutableStateOf(false) }; var sourceId by remember(existing, defaultSourceId) { mutableStateOf(existing?.paymentSourceId ?: defaultSourceId) }
-    val suggestions = remember(merchant, description, sourceId, history, categories) { CategorySuggestionEngine.suggest(CategorySuggestionInput(merchant, description, sourceId), history, categories) }
-    var showHelp by remember { mutableStateOf(history.isEmpty() && existing == null) }
+    var showHelp by remember { mutableStateOf(existing == null) }
     AlertDialog(onDismissRequest = onDismiss, containerColor = Color.White, title = { Row(verticalAlignment=Alignment.CenterVertically){Text(if(existing == null) "支出を記録" else "明細を編集",modifier=Modifier.weight(1f));TextButton(onClick={showHelp=!showHelp}){Text("？")}} }, text = { Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(10.dp)) { if(showHelp)EntryFieldHelp(); PaymentSourcePicker(sources, sourceId) { sourceId = it }; Box { OutlinedButton({ expanded = true }, Modifier.fillMaxWidth()) { Text(category.ifBlank { "支出カテゴリを選択" }) }; DropdownMenu(expanded, { expanded = false }) { categories.forEach { DropdownMenuItem({ Text(it) }, { category = it; expanded = false }) } } }; OutlinedButton(onClick = { showDatePicker = true }, modifier = Modifier.fillMaxWidth()) { Text("利用日：${date.format(DateTimeFormatter.ofPattern("yyyy/M/d"))}　変更") }; OutlinedTextField(amount, { amount = it.filter(Char::isDigit) }, label = { Text("金額") }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number)); OutlinedTextField(merchant, { merchant = it }, label = { Text("取引先") }); if(merchants.isEmpty())OutlinedButton(onClick=openMerchantSettings,modifier=Modifier.fillMaxWidth()){Text("よく使う取引先を登録")}else TemplateChips("よく使う取引先",merchants){merchant=it}; OutlinedTextField(description, { description = it }, label = { Text("内容") }); if(descriptions.isEmpty())OutlinedButton(onClick=openDescriptionSettings,modifier=Modifier.fillMaxWidth()){Text("よく使う内容を登録")}else TemplateChips("よく使う内容",descriptions){description=it}; if (suggestions.isNotEmpty()) { Text("✦ 履歴からのカテゴリ候補", fontSize = 12.sp, color = WinterBlue, fontWeight = FontWeight.Bold); FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) { suggestions.forEach { candidate -> SuggestionChip(onClick = { category = candidate }, label = { Text(candidate) }, colors = SuggestionChipDefaults.suggestionChipColors(containerColor = Color(0xFFE3EBFF))) } } }; if (existing != null) { HorizontalDivider(); TextButton(onClick = { showDeleteConfirm = true }, modifier = Modifier.fillMaxWidth()) { Text("この明細を削除", color = Color(0xFFD62F55)) } } } }, confirmButton = { Button(enabled = amount.toLongOrNull() != null && category.isNotBlank() && sourceId.isNotBlank(), onClick = { save(amount.toLong(), category, merchant, description, date, sourceId) }) { Text("保存") } }, dismissButton = { TextButton(onClick = onDismiss) { Text("キャンセル") } })
     if (showDatePicker) { val pickerState = rememberDatePickerState(initialSelectedDateMillis = datePickerMillis(date)); DatePickerDialog(onDismissRequest = { showDatePicker = false }, confirmButton = { TextButton(onClick = { pickerState.selectedDateMillis?.let { date = dateFromPickerMillis(it) }; showDatePicker = false }) { Text("決定") } }, dismissButton = { TextButton(onClick = { showDatePicker = false }) { Text("キャンセル") } }) { DatePicker(state = pickerState) } }
     if (showDeleteConfirm && existing != null) ConfirmDeleteDialog("明細を削除しますか？", "${existing.dateText()}  ${existing.merchant.ifBlank { existing.description.ifBlank { existing.category } }}  ${yen(existing.amount)}", { showDeleteConfirm = false }) { onDelete(existing.id); showDeleteConfirm = false }
@@ -686,13 +658,12 @@ internal fun visibleTemplateValues(values:List<String>,expanded:Boolean,limit:In
 @Composable private fun EmptyStateCard(title:String,description:String,actionLabel:String?=null,onAction:(()->Unit)?=null){Card(colors=CardDefaults.cardColors(containerColor=Color.White),modifier=Modifier.fillMaxWidth()){Column(Modifier.fillMaxWidth().padding(20.dp),horizontalAlignment=Alignment.CenterHorizontally,verticalArrangement=Arrangement.spacedBy(8.dp)){Text(title,fontWeight=FontWeight.Bold,color=DeepNavy);Text(description,color=Color.Gray,fontSize=13.sp);if(actionLabel!=null&&onAction!=null)Button(onClick=onAction){Text(actionLabel)}}}}
 @Composable private fun EmptyMessage(message: String) { Text(message, color = Color.Gray, modifier = Modifier.fillMaxWidth().padding(28.dp)) }
 
-@Composable private fun MerchantAnalysis(current: List<Transaction>, previous: List<Transaction>, openDetails: (String) -> Unit) {
+@Composable private fun MerchantAnalysis(current: List<Transaction>, previous: List<Transaction>, annual:Boolean=false, openDetails: (String) -> Unit) {
     val analysis = remember(current, previous) { MerchantSpendingAnalysis.calculate(current, previous) }
     val ranked = analysis.ranking
     if (ranked.isEmpty()) { EmptyMessage("取引先を登録した明細が増えると分析が表示されます"); return }
-    Card(colors = CardDefaults.cardColors(containerColor = Color.White), shape = RoundedCornerShape(18.dp), modifier = Modifier.fillMaxWidth()) { Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(7.dp)) { Text("✦ 取引先別のまとめ", fontWeight = FontWeight.Bold, color = DeepNavy); Text("支出が最も大きい利用先は「${analysis.largestSpending!!.label}」で ${yen(analysis.largestSpending.amount)} です。", fontSize = 13.sp); analysis.mostFrequent?.let { Text("利用回数が最も多いのは「${it.label}」の ${it.count}回です。", fontSize = 13.sp) }; analysis.biggestIncrease?.let { Text(if (it.changeFromPrevious > 0) "前月から最も増えたのは「${it.label}」で ${yen(it.changeFromPrevious)} 増えています。" else "前月より増加した利用先は目立ちません。", fontSize = 13.sp) } } }
     Text("取引先別ランキング", fontWeight = FontWeight.Bold, color = DeepNavy)
-    ranked.take(10).forEach { entry -> Card(Modifier.fillMaxWidth().clickable { openDetails(entry.key) }, colors = CardDefaults.cardColors(containerColor = Color.White)) { Column(Modifier.padding(14.dp)) { Row(verticalAlignment = Alignment.CenterVertically) { Text(entry.label, Modifier.weight(1f), fontWeight = FontWeight.SemiBold); Text(yen(entry.amount), fontWeight = FontWeight.Bold, color = DeepNavy); Text("  ›", color = WinterBlue) }; Text("${entry.count}回・平均 ${yen(entry.average)}・前月比 ${signedYen(entry.changeFromPrevious)}", color = Color.Gray, fontSize = 12.sp) } } }
+    ranked.take(10).forEach { entry -> Card(Modifier.fillMaxWidth().clickable { openDetails(entry.key) }, colors = CardDefaults.cardColors(containerColor = Color.White)) { Column(Modifier.padding(14.dp)) { Row(verticalAlignment = Alignment.CenterVertically) { Text(entry.label, Modifier.weight(1f), fontWeight = FontWeight.SemiBold); Text(yen(entry.amount), fontWeight = FontWeight.Bold, color = DeepNavy); Text("  ›", color = WinterBlue) }; Text("${entry.count}回・平均 ${yen(entry.average)}・${if(annual)"前年比" else "前月比"} ${signedYen(entry.changeFromPrevious)}", color = Color.Gray, fontSize = 12.sp) } } }
 }
 
 @Composable private fun TransactionDetailDialog(title: String, rows: List<Transaction>, dismiss: () -> Unit) {
@@ -703,6 +674,7 @@ private fun signedYen(value: Long): String = when { value > 0 -> "+${yen(value)}
 internal const val RECURRING_AMOUNT_LABEL = "金額"
 private fun formatBackupTime(epochMillis: Long): String = java.time.Instant.ofEpochMilli(epochMillis).atZone(ZoneId.systemDefault()).format(DateTimeFormatter.ofPattern("yyyy/M/d HH:mm"))
 private fun List<Transaction>.forMonth(month: YearMonth) = filter { YearMonth.from(Instant.ofEpochMilli(it.usedAt).atZone(ZoneId.systemDefault())) == month }.sortedBy { it.usedAt }
+private fun List<Transaction>.forYear(year:Int) = filter { Instant.ofEpochMilli(it.usedAt).atZone(ZoneId.systemDefault()).year == year }.sortedBy { it.usedAt }
 private fun Transaction.dateText() = Instant.ofEpochMilli(usedAt).atZone(ZoneId.systemDefault()).toLocalDate().format(DateTimeFormatter.ofPattern("M/d"))
 private fun yen(value: Long): String = "¥${NumberFormat.getIntegerInstance().format(value)}"
 private fun intervalLabel(months: Int): String = if (months >= 12 && months % 12 == 0) "${months / 12}年ごと" else "${months}か月ごと"

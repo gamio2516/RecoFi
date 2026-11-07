@@ -63,7 +63,7 @@ class AutoBackupTest {
     @Test fun backupManagerGeneratesValidatedV5Payload() {
         seedDatabase()
         val payload = BackupManager(context).createValidatedPayload()
-        assertEquals(5, JSONObject(payload).getInt("backupFormatVersion"))
+        assertEquals(6, JSONObject(payload).getInt("backupFormatVersion"))
         assertNotNull(BackupCodec.decodeAndValidate(payload))
     }
 
