@@ -226,6 +226,7 @@ internal fun CardMemoApp(vm: MainViewModel = viewModel()) {
     var detailMerchant by remember { mutableStateOf<String?>(null) }
     var detailDate by remember { mutableStateOf<LocalDate?>(null) }
     var detailTrendMonth by remember { mutableStateOf<YearMonth?>(null) }
+    var detailTrendRows by remember { mutableStateOf<List<Transaction>>(emptyList()) }
     val fixedOnly = analysisMode == 1
     val calendarMode = analysisMode == 2
     val merchantMode = analysisMode == 3
@@ -246,7 +247,6 @@ internal fun CardMemoApp(vm: MainViewModel = viewModel()) {
             SpendingCalendar(month, monthRows) { detailDate = it }
         } else if (merchantMode) {
             MerchantAnalysis(analysisRows, previousRows, annual) { detailMerchant = it }
-            if (annual) { Text("月次推移", fontSize = 18.sp, fontWeight = FontWeight.Bold, color = DeepNavy); MonthlySpendingTrend(month.year, analysisRows) { detailTrendMonth = it } }
         } else {
         if (!annual && budget <= 0) EmptyStateCard("月間予算が未設定です","予算を登録すると、使用状況を比較できます","月間予算を設定",setBudget)
         if (total == 0L && (annual || budget <= 0L)) EmptyStateCard("分析データがありません","支出を記録すると分析が表示されます","支出を記録",recordExpense) else {
@@ -255,14 +255,13 @@ internal fun CardMemoApp(vm: MainViewModel = viewModel()) {
                 Column(horizontalAlignment = Alignment.CenterHorizontally) { val overBudget = !annual && budget > 0 && total > budget; val emphasizeOver = overBudget && !fixedOnly; if (overBudget) Text("予算オーバー", color = Color(0xFFFF1738), fontSize = 15.sp, fontWeight = FontWeight.ExtraBold); Text(if (annual) "年間支出" else "現在の支出", color = Color.Gray, fontSize = 12.sp, fontWeight = FontWeight.Normal); Text(yen(total), fontSize = 22.sp, fontWeight = FontWeight.Bold, color = if (emphasizeOver) Color(0xFFFF1738) else DeepNavy); if (!annual && budget > 0) { Text("予算比 ${total * 100 / budget}%", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = if (emphasizeOver) Color(0xFFFF1738) else DeepNavy); Text("予算 ${yen(budget)}", fontSize = 11.sp, color = Color(0xFF202124)) } }
             }
             totals.forEachIndexed { index, (category, amount) -> Card(Modifier.fillMaxWidth().clickable { detailCategory = category }, colors = CardDefaults.cardColors(containerColor = Color.White)) { Row(Modifier.fillMaxWidth().padding(12.dp), verticalAlignment = Alignment.CenterVertically) { Box(Modifier.size(14.dp).background(PieColors[index % PieColors.size], RoundedCornerShape(3.dp))); Spacer(Modifier.width(10.dp)); Text(category, Modifier.weight(1f)); Text("${if (fixedOnly && budget > 0) amount * 100 / budget else if(total > 0) amount * 100 / total else 0}%", fontWeight = FontWeight.SemiBold, color = if (fixedOnly) DeepNavy else Color(0xFF202124)); Spacer(Modifier.width(8.dp)); Text(yen(amount), fontWeight = FontWeight.SemiBold); Spacer(Modifier.width(6.dp)); Text("›", color = WinterBlue) } } }
-            if (annual) { Text("月次推移", fontSize = 18.sp, fontWeight = FontWeight.Bold, color = DeepNavy); MonthlySpendingTrend(month.year, analysisRows) { detailTrendMonth = it } }
         }
         }
     }
-    detailCategory?.let { category -> TransactionDetailDialog("$category の明細", analysisRows.filter { it.category == category }, { detailCategory = null }) }
-    detailMerchant?.let { normalized -> TransactionDetailDialog(if (annual) "${month.year}年の取引先明細" else "取引先別の明細", analysisRows.filter { normalizeForLearning(it.merchant) == normalized }, { detailMerchant = null }) }
+    detailCategory?.let { category -> val rows = analysisRows.filter { it.category == category }; TransactionDetailDialog("$category の明細", rows, { detailCategory = null }, if (annual) month.year else null) { selected -> detailTrendRows = rows.forMonth(selected); detailCategory = null; detailTrendMonth = selected } }
+    detailMerchant?.let { normalized -> val rows = analysisRows.filter { normalizeForLearning(it.merchant) == normalized }; TransactionDetailDialog(if (annual) "${month.year}年の取引先明細" else "取引先別の明細", rows, { detailMerchant = null }, if (annual) month.year else null) { selected -> detailTrendRows = rows.forMonth(selected); detailMerchant = null; detailTrendMonth = selected } }
     detailDate?.let { date -> TransactionDetailDialog("${date.monthValue}月${date.dayOfMonth}日の明細", monthRows.filter { Instant.ofEpochMilli(it.usedAt).atZone(ZoneId.systemDefault()).toLocalDate() == date }, { detailDate = null }) }
-    detailTrendMonth?.let { selected -> TransactionDetailDialog("${selected.year}年${selected.monthValue}月の明細", all.forMonth(selected), { detailTrendMonth = null }) }
+    detailTrendMonth?.let { selected -> TransactionDetailDialog("${selected.year}年${selected.monthValue}月の明細", detailTrendRows.ifEmpty { all.forMonth(selected) }, { detailTrendMonth = null; detailTrendRows = emptyList() }) }
 }
 
 @Composable private fun YearHeader(year:Int,previous:()->Unit,next:()->Unit){Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.SpaceBetween,verticalAlignment=Alignment.CenterVertically){OutlinedButton(onClick=previous){Text("‹")};Text("${year}年",fontSize=20.sp,fontWeight=FontWeight.Bold,color=DeepNavy);OutlinedButton(onClick=next){Text("›")}}}
@@ -723,8 +722,8 @@ internal fun visibleTemplateValues(values:List<String>,expanded:Boolean,limit:In
     ranked.take(10).forEach { entry -> Card(Modifier.fillMaxWidth().clickable { openDetails(entry.key) }, colors = CardDefaults.cardColors(containerColor = Color.White)) { Column(Modifier.padding(14.dp)) { Row(verticalAlignment = Alignment.CenterVertically) { Text(entry.label, Modifier.weight(1f), fontWeight = FontWeight.SemiBold); Text(yen(entry.amount), fontWeight = FontWeight.Bold, color = DeepNavy); Text("  ›", color = WinterBlue) }; Text("${entry.count}回・平均 ${yen(entry.average)}・${if(annual)"前年比" else "前月比"} ${signedYen(entry.changeFromPrevious)}", color = Color.Gray, fontSize = 12.sp) } } }
 }
 
-@Composable private fun TransactionDetailDialog(title: String, rows: List<Transaction>, dismiss: () -> Unit) {
-    AlertDialog(onDismissRequest = dismiss, title = { Text(title) }, text = { Column { Text("${rows.size}件・合計 ${yen(rows.sumOf { it.amount })}", color = DeepNavy, fontWeight = FontWeight.Bold); Spacer(Modifier.height(8.dp)); LazyColumn(Modifier.heightIn(max = 380.dp), verticalArrangement = Arrangement.spacedBy(7.dp)) { items(rows, key = { it.id }) { item -> Card(colors = CardDefaults.cardColors(containerColor = Color.White), elevation = CardDefaults.cardElevation(defaultElevation = if (item.recurringId != null) 3.dp else 0.dp), border = if (item.recurringId != null) BorderStroke(1.dp, Color(0xFF89A9FF)) else null) { Row(Modifier.fillMaxWidth().padding(11.dp), verticalAlignment = Alignment.CenterVertically) { Column(Modifier.weight(1f)) { Text(item.merchant.ifBlank { item.category }, fontWeight = FontWeight.SemiBold); Text("${item.dateText()}  ${item.category}${if (item.recurringId != null) "  固定費" else ""}", fontSize = 12.sp, color = Color.Gray) }; Text(yen(item.amount), fontWeight = FontWeight.Bold) } } } } } }, confirmButton = { TextButton(onClick = dismiss) { Text("閉じる") } })
+@Composable private fun TransactionDetailDialog(title: String, rows: List<Transaction>, dismiss: () -> Unit, trendYear: Int? = null, openMonth: (YearMonth) -> Unit = {}) {
+    AlertDialog(onDismissRequest = dismiss, title = { Text(title) }, text = { Column(Modifier.heightIn(max = 620.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(7.dp)) { Text("${rows.size}件・合計 ${yen(rows.sumOf { it.amount })}", color = DeepNavy, fontWeight = FontWeight.Bold); if (trendYear != null) { Spacer(Modifier.height(3.dp)); Text("月次推移", fontWeight = FontWeight.Bold, color = DeepNavy); MonthlySpendingTrend(trendYear, rows, openMonth); Text("明細", fontWeight = FontWeight.Bold, color = DeepNavy) }; rows.forEach { item -> Card(colors = CardDefaults.cardColors(containerColor = Color.White), elevation = CardDefaults.cardElevation(defaultElevation = if (item.recurringId != null) 3.dp else 0.dp), border = if (item.recurringId != null) BorderStroke(1.dp, Color(0xFF89A9FF)) else null) { Row(Modifier.fillMaxWidth().padding(11.dp), verticalAlignment = Alignment.CenterVertically) { Column(Modifier.weight(1f)) { Text(item.merchant.ifBlank { item.category }, fontWeight = FontWeight.SemiBold); Text("${item.dateText()}  ${item.category}${if (item.recurringId != null) "  固定費" else ""}", fontSize = 12.sp, color = Color.Gray) }; Text(yen(item.amount), fontWeight = FontWeight.Bold) } } } } }, confirmButton = { TextButton(onClick = dismiss) { Text("閉じる") } })
 }
 
 private fun signedYen(value: Long): String = when { value > 0 -> "+${yen(value)}"; value < 0 -> "-${yen(-value)}"; else -> "±¥0" }
