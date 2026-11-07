@@ -51,6 +51,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         updateTransactions(if (id == null) _transactions.value + item else _transactions.value.map { if (it.id == id) item else it })
     }
 
+    fun linkTransactionToRecurring(transactionId:Long,recurringId:Long?){
+        val target=_transactions.value.firstOrNull{it.id==transactionId}?:return
+        if(target.yearMonth().toString() in _lockedMonths.value)return
+        if(recurringId!=null&&_recurringExpenses.value.none{it.id==recurringId})return
+        updateTransactions(_transactions.value.map{if(it.id==transactionId)it.copy(recurringId=recurringId)else it})
+    }
+
     fun deleteTransaction(id: Long) {val target=_transactions.value.firstOrNull{it.id==id}?:return;if(target.yearMonth().toString() in _lockedMonths.value)return;updateTransactions(_transactions.value.filterNot { it.id == id })}
     fun toggleConfirmed(id: Long) {
         val db=StorageProvider.database(getApplication());val match=db.reconciliation().loadMatches().firstOrNull{it.transactionId==id}?:return;val statement=db.statements().loadEntry(match.statementEntryId)?:return;val imported=_importedStatements.value.firstOrNull{it.fileHash==statement.fileHash}?:return;if(imported.statementMonth in _lockedMonths.value)return
