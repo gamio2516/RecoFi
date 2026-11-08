@@ -71,7 +71,7 @@ object StatementTools {
         return descriptor.use { pfd ->
             PdfRenderer(pfd).use { renderer ->
                 suspend fun recognize(scale: Int): ReadResult {
-                    var total: Long? = null
+                    val totalCandidates = mutableListOf<Long>()
                     val rows = buildList {
                     for (pageIndex in 0 until renderer.pageCount) {
                         renderer.openPage(pageIndex).use { page ->
@@ -80,7 +80,6 @@ object StatementTools {
                             page.render(bitmap, null, null, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
                             val result = recognizer.process(InputImage.fromBitmap(bitmap, 0)).awaitResult()
                             val billingZone = findBillingZone(result)
-                            addAll(parseRows(result, targetMonth, billingZone))
                             // A whole A4 page is large enough that ML Kit can silently omit small
                             // lines even at a high render scale.  Re-read it in overlapping bands;
                             // the overlap prevents a row on a band boundary from being lost.
@@ -98,29 +97,59 @@ object StatementTools {
                                         null
                                     )
                                     val bandResult = recognizer.process(InputImage.fromBitmap(band, 0)).awaitResult()
-                                    addAll(parseRows(bandResult, targetMonth, billingZone))
+                                    val coreTop = if (top == 0) 0 else overlap / 2
+                                    val coreBottom = if (bottom == bitmap.height) band.height else band.height - overlap / 2
+                                    addAll(parseRows(bandResult, targetMonth, billingZone, coreTop, coreBottom))
+                                    band.recycle()
+                                    if (bottom == bitmap.height) break
+                                    top = bottom - overlap
+                                }
+                            } else {
+                                addAll(parseRows(result, targetMonth, null))
+                                extractRakutenSummaryAmounts(result.text).forEach(totalCandidates::add)
+                                val bandHeight = 1_200
+                                val overlap = 180
+                                var top = 0
+                                while (top < bitmap.height) {
+                                    val bottom = minOf(top + bandHeight, bitmap.height)
+                                    val band = Bitmap.createBitmap(bitmap.width, bottom - top, Bitmap.Config.ARGB_8888)
+                                    android.graphics.Canvas(band).drawBitmap(
+                                        bitmap,
+                                        Rect(0, top, bitmap.width, bottom),
+                                        Rect(0, 0, band.width, band.height),
+                                        null
+                                    )
+                                    val bandResult = recognizer.process(InputImage.fromBitmap(band, 0)).awaitResult()
+                                    extractRakutenSummaryAmounts(bandResult.text).forEach(totalCandidates::add)
                                     band.recycle()
                                     if (bottom == bitmap.height) break
                                     top = bottom - overlap
                                 }
                             }
-                            total = parseRakutenDeclaredTotal(result) ?: parseRakutenDeclaredTotal(result.text) ?: total
+                            parseRakutenDeclaredTotal(result)?.let(totalCandidates::add)
+                            parseRakutenDeclaredTotal(result.text)?.let(totalCandidates::add)
+                            if (billingZone == null) parseRakutenSummaryTotal(result.text)?.let(totalCandidates::add)
                             bitmap.recycle()
                         }
                     }
                     }.distinctBy { Triple(it.date, it.amount, normalize(it.merchant)) }
-                    return ReadResult(rows, total)
+                    val declaredTotal = totalCandidates.filterNot { it in 2_000L..2_099L }.maxOrNull()
+                    return ReadResult(rows, declaredTotal)
                 }
                 val first = recognize(4)
-                val expected = first.declaredTotal
-                if (expected != null && first.entries.sumOf { it.amount } == expected) first else {
-                    val second = recognize(3)
-                    val total = expected ?: second.declaredTotal
-                    if (total == null) second else if (second.entries.sumOf { it.amount } == total) second.copy(declaredTotal = total) else {
-                        val third = recognize(2)
-                        listOf(first, second, third).minByOrNull { candidate -> kotlin.math.abs(candidate.entries.sumOf { it.amount } - total) }!!.copy(declaredTotal = total)
-                    }
+                if (first.declaredTotal != null && first.entries.sumOf { it.amount } == first.declaredTotal) return@use first
+                val second = recognize(3)
+                val knownTotal = first.declaredTotal ?: second.declaredTotal
+                if (knownTotal != null && second.entries.sumOf { it.amount } == knownTotal) return@use second.copy(declaredTotal = knownTotal)
+                val third = recognize(2)
+                val candidates = listOf(first, second, third)
+                val total = knownTotal ?: third.declaredTotal
+                val selected = if (total != null) {
+                    candidates.minByOrNull { candidate -> kotlin.math.abs(candidate.entries.sumOf { it.amount } - total) }!!
+                } else {
+                    candidates.maxWithOrNull(compareBy<ReadResult> { it.entries.sumOf { row -> row.amount } }.thenBy { it.entries.size })!!
                 }
+                selected.copy(declaredTotal = total ?: selected.entries.sumOf { it.amount })
             }
         }.also { recognizer.close() }
     }
@@ -145,6 +174,19 @@ object StatementTools {
             .groupingBy { it }.eachCount().maxWithOrNull(compareBy<Map.Entry<Long, Int>> { it.value }.thenBy { it.key })?.key
     }
 
+    internal fun parseRakutenSummaryTotal(text: String): Long? {
+        val amounts = extractRakutenSummaryAmounts(text)
+        return amounts.groupingBy { it }.eachCount().entries
+            .filter { it.value >= 2 }
+            .maxWithOrNull(compareBy<Map.Entry<Long, Int>> { it.value }.thenBy { it.key })?.key
+    }
+
+    private fun extractRakutenSummaryAmounts(text: String): List<Long> =
+        Regex("[0-9]{1,3}(?:[,，][0-9]{3})+").findAll(text)
+            .mapNotNull { it.value.replace(",", "").replace("，", "").toLongOrNull() }
+            .filter { it >= 1_000 && it !in 2_000L..2_099L }
+            .toList()
+
     private fun parseRakutenDeclaredTotal(text: Text): Long? {
         data class LocatedLine(val text: String, val left: Int, val right: Int, val centerY: Int, val height: Int)
         val lines = text.textBlocks.flatMap { it.lines }.mapNotNull { line ->
@@ -154,10 +196,10 @@ object StatementTools {
         val anchor = lines.firstOrNull { it.text.contains("明細中の利用金額合計") }
             ?: lines.firstOrNull { it.text.contains("明細中") && it.text.contains("利用金額合計") }
             ?: return null
-        parseMoney(anchor.text.substringAfter("合計", ""))?.takeIf { it >= 1_000 }?.let { return it }
+        parseMoney(anchor.text.substringAfter("合計", ""))?.takeIf { it >= 1_000 && it !in 2_000L..2_099L }?.let { return it }
         return lines.asSequence()
             .filter { it.left >= anchor.right - 12 && kotlin.math.abs(it.centerY - anchor.centerY) <= maxOf(anchor.height, it.height) }
-            .mapNotNull { candidate -> parseMoney(candidate.text)?.takeIf { it >= 1_000 }?.let { candidate to it } }
+            .mapNotNull { candidate -> parseMoney(candidate.text)?.takeIf { it >= 1_000 && it !in 2_000L..2_099L }?.let { candidate to it } }
             .minByOrNull { (candidate, _) -> kotlin.math.abs(candidate.centerY - anchor.centerY) * 10_000 + kotlin.math.abs(candidate.left - anchor.right) }
             ?.second
     }
@@ -185,7 +227,13 @@ object StatementTools {
         return BillingZone(previous?.let { (it + billing.left) / 2 } ?: billing.left - 18, next?.let { (billing.left + it) / 2 } ?: Int.MAX_VALUE)
     }
 
-    private fun parseRows(text: Text, month: YearMonth, billingZone: BillingZone? = findBillingZone(text)): List<CardStatementEntry> {
+    private fun parseRows(
+        text: Text,
+        month: YearMonth,
+        billingZone: BillingZone? = findBillingZone(text),
+        minCenterY: Int = Int.MIN_VALUE,
+        maxCenterYExclusive: Int = Int.MAX_VALUE
+    ): List<CardStatementEntry> {
         data class Piece(val text: String, val left: Int, val centerY: Int)
         val pieces = text.textBlocks.flatMap { it.lines }.flatMap { it.elements }.mapNotNull { element ->
             val box = element.boundingBox ?: return@mapNotNull null
@@ -199,6 +247,8 @@ object StatementTools {
         }
         val zone = billingZone ?: return emptyList()
         return rows.mapNotNull { row ->
+            val rowCenterY = row.map { it.centerY }.average()
+            if (rowCenterY < minCenterY || rowCenterY >= maxCenterYExclusive) return@mapNotNull null
             val sorted = row.sortedBy { it.left }
             val amount = sorted.firstOrNull { it.left >= zone.left && it.left < zone.right && parseMoney(it.text) != null }?.text?.let(::parseMoney) ?: return@mapNotNull null
             parseRow(sorted.joinToString(" ") { it.text }, month, amount)
