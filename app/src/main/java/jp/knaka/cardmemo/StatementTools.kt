@@ -80,6 +80,7 @@ object StatementTools {
                             page.render(bitmap, null, null, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
                             val result = recognizer.process(InputImage.fromBitmap(bitmap, 0)).awaitResult()
                             val billingZone = findBillingZone(result)
+                            extractRakutenSummaryAmounts(result.text).forEach(totalCandidates::add)
                             // A whole A4 page is large enough that ML Kit can silently omit small
                             // lines even at a high render scale.  Re-read it in overlapping bands;
                             // the overlap prevents a row on a band boundary from being lost.
@@ -99,14 +100,15 @@ object StatementTools {
                                     val bandResult = recognizer.process(InputImage.fromBitmap(band, 0)).awaitResult()
                                     val coreTop = if (top == 0) 0 else overlap / 2
                                     val coreBottom = if (bottom == bitmap.height) band.height else band.height - overlap / 2
-                                    addAll(parseRows(bandResult, targetMonth, billingZone, coreTop, coreBottom))
+                                    val dataTop = maxOf(coreTop, billingZone.headerCenterY + 10 - top)
+                                    addAll(parseRows(bandResult, targetMonth, billingZone, dataTop, coreBottom))
+                                    extractRakutenSummaryAmounts(bandResult.text).forEach(totalCandidates::add)
                                     band.recycle()
                                     if (bottom == bitmap.height) break
                                     top = bottom - overlap
                                 }
                             } else {
                                 addAll(parseRows(result, targetMonth, null))
-                                extractRakutenSummaryAmounts(result.text).forEach(totalCandidates::add)
                                 val bandHeight = 1_200
                                 val overlap = 180
                                 var top = 0
@@ -182,8 +184,8 @@ object StatementTools {
     }
 
     private fun extractRakutenSummaryAmounts(text: String): List<Long> =
-        Regex("[0-9]{1,3}(?:[,，][0-9]{3})+").findAll(text)
-            .mapNotNull { it.value.replace(",", "").replace("，", "").toLongOrNull() }
+        Regex("[0-9]{1,3}(?:[,，.．][0-9]{3})+").findAll(text)
+            .mapNotNull { it.value.replace(Regex("[,，.．]"), "").toLongOrNull() }
             .filter { it >= 1_000 && it !in 2_000L..2_099L }
             .toList()
 
@@ -204,7 +206,7 @@ object StatementTools {
             ?.second
     }
 
-    private data class BillingZone(val left: Int, val right: Int)
+    private data class BillingZone(val left: Int, val right: Int, val headerCenterY: Int)
 
     private fun findBillingZone(text: Text): BillingZone? {
         data class HeaderPiece(val text: String, val left: Int, val centerY: Int)
@@ -219,12 +221,16 @@ object StatementTools {
         }
         val header = rows.firstOrNull { row -> row.joinToString("") { it.text }.replace(" ", "").contains("当月請求額") } ?: return null
         val sorted = header.sortedBy { it.left }
-        val index = sorted.indexOfFirst { it.text.replace(" ", "").contains("当月請求額") || it.text.contains("請求額") }
+        val index = sorted.indexOfLast { it.text.replace(" ", "").contains("当月請求額") || it.text.contains("請求額") }
         if (index < 0) return null
         val billing = sorted[index].let { found -> sorted.getOrNull(index - 1)?.takeIf { found.text.contains("請求額") && it.text.contains("当月") } ?: found }
         val previous = sorted.lastOrNull { it.left < billing.left - 8 }?.left
         val next = sorted.firstOrNull { it.left > billing.left + 8 }?.left
-        return BillingZone(previous?.let { (it + billing.left) / 2 } ?: billing.left - 18, next?.let { (billing.left + it) / 2 } ?: Int.MAX_VALUE)
+        return BillingZone(
+            previous?.let { (it + billing.left) / 2 } ?: billing.left - 18,
+            next?.let { (billing.left + it) / 2 } ?: Int.MAX_VALUE,
+            header.map { it.centerY }.average().toInt()
+        )
     }
 
     private fun parseRows(
