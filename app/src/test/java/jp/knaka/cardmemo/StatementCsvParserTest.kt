@@ -38,7 +38,9 @@ class StatementCsvParserTest {
     @Test fun readsRakutenPrintedStatementTotal() {
         assertEquals(123456L, StatementTools.parseRakutenDeclaredTotal("明細中の利用金額合計：123,456円"))
         assertEquals(358824L, StatementTools.parseRakutenDeclaredTotal("明細中の利用金額合計\n内）キャッシング 0\n358,824"))
+        assertEquals(358824L, StatementTools.parseRakutenDeclaredTotal("2026年10月 明細中の利用金額合計\n358,824"))
         assertEquals(358824L, StatementTools.parseRakutenDeclaredTotal("10月お支払予定金額の明細\n358,824\n内）キャッシング 0\n本カード会員様利用分 358,824\n2026/10 358,824円"))
+        assertEquals(358824L, StatementTools.parseRakutenSummaryTotal("10月お支払予定金額の明細 358,824 本カード会員様利用分 358,824"))
     }
 
     @Test fun duplicateRowsAreRemovedUsingNormalizedMerchant() {
@@ -55,3 +57,4 @@ class StatementCsvParserTest {
         assertEquals("line1\nline2", rows[1][0])
     }
 }
+
