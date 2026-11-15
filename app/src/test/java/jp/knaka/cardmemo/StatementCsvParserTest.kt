@@ -90,10 +90,25 @@ class StatementCsvParserTest {
 
     @Test fun jalUsesTheBilledAmountColumn() {
         val bounds = StatementTools.jalBillingColumnBounds(
-            listOf("ご利用額" to 400, "払戻額" to 500, "ご請求額" to 600, "支払区分" to 700)
+            listOf(
+                "ご利用額" to 400, "払戻額" to 500, "ご請求額" to 600,
+                "支払区分" to 700, "今回回数" to 800, "今回ご請求額・弁済金" to 900,
+                "現地通貨額" to 1_000
+            )
         )
-        assertEquals(550, bounds?.first)
-        assertEquals(650, bounds?.second)
+        assertEquals(850, bounds?.first)
+        assertEquals(950, bounds?.second)
+    }
+
+    @Test fun jalBilledAmountHeaderMayBeSplitByOcr() {
+        val bounds = StatementTools.jalBillingColumnBounds(
+            listOf(
+                "ご請求額" to 600, "支払区分" to 700, "今回回数" to 800,
+                "今回" to 880, "請求額" to 920, "現地通貨額" to 1_000
+            )
+        )
+        assertEquals(850, bounds?.first)
+        assertEquals(950, bounds?.second)
     }
 
     @Test fun missingRequiredHeaderReturnsEmpty() {
