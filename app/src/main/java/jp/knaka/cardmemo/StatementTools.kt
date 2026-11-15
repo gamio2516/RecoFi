@@ -224,18 +224,40 @@ object StatementTools {
 
     internal fun parseJalDeclaredTotal(text: String): Long? {
         val compact = text.replace(Regex("[\\s　]+"), "")
-        val tail = compact.substringAfter("ご請求額合計", "").take(40)
-        return Regex("[0-9]{1,3}(?:[,，][0-9]{3})+|[0-9]{1,9}").find(tail)
-            ?.value?.replace(Regex("[,，]"), "")?.toLongOrNull()
+        return listOf("今回請求額合計", "ご請求額合計", "お支払額").firstNotNullOfOrNull { label ->
+            val tail = compact.substringAfter(label, "").take(40)
+            Regex("[0-9]{1,3}(?:[,，][0-9]{3})+|[0-9]{1,9}").find(tail)
+                ?.value?.replace(Regex("[,，]"), "")?.toLongOrNull()
+        }
     }
 
     internal fun jalBillingColumnBounds(pieces: List<Pair<String, Int>>): Pair<Int, Int>? {
         val sorted = pieces.sortedBy { it.second }
-        val index = sorted.indexOfFirst { it.first.replace(" ", "").contains("ご請求額") }
-        if (index < 0) return null
-        val center = sorted[index].second
-        val previous = sorted.getOrNull(index - 1)?.second
-        val next = sorted.getOrNull(index + 1)?.second
+        // JAL statements contain both "ご請求額" (purchase balance) and
+        // "今回請求額" (the amount actually billed this month). ML Kit may
+        // split the latter heading, so locate a contiguous element span.
+        val normalized = sorted.map { it.first.replace(Regex("[\\s　]+"), "") }
+        var start = -1
+        var end = -1
+        outer@ for (i in normalized.indices) {
+            val first = normalized[i]
+            if (!(first.startsWith("今回") && first.contains("請求額")) &&
+                first !in setOf("今回", "今回ご", "今回請求")) continue
+            var joined = ""
+            for (j in i until minOf(normalized.size, i + 4)) {
+                joined += normalized[j]
+                if (joined.contains("今回請求額") || joined.contains("今回ご請求額")) {
+                    start = i
+                    end = j
+                    break@outer
+                }
+                if (joined.length > 12) break
+            }
+        }
+        if (start < 0) return null
+        val center = (sorted[start].second + sorted[end].second) / 2
+        val previous = sorted.getOrNull(start - 1)?.second
+        val next = sorted.getOrNull(end + 1)?.second
         return (previous?.let { (it + center) / 2 } ?: center - 18) to
             (next?.let { (center + it) / 2 } ?: Int.MAX_VALUE)
     }
@@ -244,7 +266,10 @@ object StatementTools {
         data class HeaderPiece(val text: String, val left: Int, val centerY: Int)
         val pieces = text.textBlocks.flatMap { it.lines }.flatMap { it.elements }.mapNotNull { element ->
             val box = element.boundingBox ?: return@mapNotNull null
-            HeaderPiece(element.text.trim(), box.left, box.centerY())
+            // Use the horizontal centre. The printed JAL heading is wider than
+            // its amount column, so its left edge would produce a boundary
+            // that cuts off four-digit amounts.
+            HeaderPiece(element.text.trim(), box.centerX(), box.centerY())
         }.sortedBy { it.centerY }
         val rows = mutableListOf<MutableList<HeaderPiece>>()
         pieces.forEach { piece ->
@@ -253,7 +278,8 @@ object StatementTools {
         }
         val header = rows.firstOrNull { row ->
             val joined = row.joinToString("") { it.text }.replace(" ", "")
-            joined.contains("ご利用箇所") && joined.contains("ご請求額")
+            joined.contains("ご利用箇所") &&
+                (joined.contains("今回請求額") || joined.contains("今回ご請求額"))
         } ?: return null
         val bounds = jalBillingColumnBounds(header.map { it.text to it.left }) ?: return null
         return BillingZone(bounds.first, bounds.second, header.map { it.centerY }.average().toInt())
@@ -308,7 +334,7 @@ object StatementTools {
         data class Piece(val text: String, val left: Int, val centerY: Int)
         val pieces = text.textBlocks.flatMap { it.lines }.flatMap { it.elements }.mapNotNull { element ->
             val box = element.boundingBox ?: return@mapNotNull null
-            Piece(element.text.trim(), box.left, box.centerY())
+            Piece(element.text.trim(), if (isJal) box.centerX() else box.left, box.centerY())
         }.sortedBy { it.centerY }
         val rows = mutableListOf<MutableList<Piece>>()
         pieces.forEach { piece ->
