@@ -134,7 +134,7 @@ object StatementTools {
                             bitmap.recycle()
                         }
                     }
-                    }.distinctBy { Triple(it.date, it.amount, normalize(it.merchant)) }
+                    }
                     val declaredTotal = totalCandidates.filterNot { it in 2_000L..2_099L }.maxOrNull()
                     return ReadResult(rows, declaredTotal)
                 }
@@ -151,7 +151,8 @@ object StatementTools {
                 } else {
                     candidates.maxWithOrNull(compareBy<ReadResult> { it.entries.sumOf { row -> row.amount } }.thenBy { it.entries.size })!!
                 }
-                selected.copy(declaredTotal = total ?: selected.entries.sumOf { it.amount })
+                val repaired = total?.let { reconcileScaleResults(selected.entries,mergeScaleRows(candidates.map{it.entries}),it) } ?: selected.entries
+                ReadResult(repaired,total ?: repaired.sumOf { it.amount })
             }
         }.also { recognizer.close() }
     }
@@ -208,6 +209,24 @@ object StatementTools {
 
     private data class BillingZone(val left: Int, val right: Int, val headerCenterY: Int)
 
+    internal fun billingColumnBounds(pieces:List<Pair<String,Int>>):Pair<Int,Int>?{
+        val sorted=pieces.sortedBy{it.second}
+        val combinedIndex=sorted.indexOfFirst{it.first.replace(" ","").contains("当月請求額")}
+        val start:Int
+        val end:Int
+        val center:Int
+        if(combinedIndex>=0){start=combinedIndex;end=combinedIndex;center=sorted[combinedIndex].second}
+        else{
+            start=sorted.indexOfFirst{it.first.replace(" ","").contains("当月")}
+            if(start<0)return null
+            end=(start+1 until minOf(sorted.size,start+4)).firstOrNull{sorted[it].first.replace(" ","").contains("請求額")}?:return null
+            center=(sorted[start].second+sorted[end].second)/2
+        }
+        val previous=sorted.getOrNull(start-1)?.second
+        val next=sorted.getOrNull(end+1)?.second
+        return (previous?.let{(it+center)/2}?:center-18) to (next?.let{(center+it)/2}?:Int.MAX_VALUE)
+    }
+
     private fun findBillingZone(text: Text): BillingZone? {
         data class HeaderPiece(val text: String, val left: Int, val centerY: Int)
         val pieces = text.textBlocks.flatMap { it.lines }.flatMap { it.elements }.mapNotNull { element ->
@@ -220,15 +239,10 @@ object StatementTools {
             if (row == null || kotlin.math.abs(row.map { it.centerY }.average() - piece.centerY) > 24) rows += mutableListOf(piece) else row += piece
         }
         val header = rows.firstOrNull { row -> row.joinToString("") { it.text }.replace(" ", "").contains("当月請求額") } ?: return null
-        val sorted = header.sortedBy { it.left }
-        val index = sorted.indexOfLast { it.text.replace(" ", "").contains("当月請求額") || it.text.contains("請求額") }
-        if (index < 0) return null
-        val billing = sorted[index].let { found -> sorted.getOrNull(index - 1)?.takeIf { found.text.contains("請求額") && it.text.contains("当月") } ?: found }
-        val previous = sorted.lastOrNull { it.left < billing.left - 8 }?.left
-        val next = sorted.firstOrNull { it.left > billing.left + 8 }?.left
+        val bounds=billingColumnBounds(header.map{it.text to it.left})?:return null
         return BillingZone(
-            previous?.let { (it + billing.left) / 2 } ?: billing.left - 18,
-            next?.let { (billing.left + it) / 2 } ?: Int.MAX_VALUE,
+            bounds.first,
+            bounds.second,
             header.map { it.centerY }.average().toInt()
         )
     }
@@ -278,6 +292,35 @@ object StatementTools {
     }
 
     private fun parseMoney(value: String): Long? = value.replace(Regex("[^0-9-]"), "").toLongOrNull()?.let { kotlin.math.abs(it) }
+
+    internal fun reconcileScaleResults(selected:List<CardStatementEntry>,allRows:List<CardStatementEntry>,declaredTotal:Long):List<CardStatementEntry>{
+        var result=selected.toMutableList()
+        fun key(row:CardStatementEntry)=Triple(row.date,row.amount,normalize(row.merchant))
+        val availableCounts=allRows.groupingBy(::key).eachCount()
+        fun total()=result.sumOf{it.amount}
+        repeat(12){
+            val before=kotlin.math.abs(total()-declaredTotal)
+            if(before==0L)return result.sortedByDescending{it.date}
+            data class Repair(val score:Long,val apply:()->Unit)
+            val repairs=mutableListOf<Repair>()
+            allRows.forEach{candidate->
+                val same=result.withIndex().filter{(_,row)->row.date==candidate.date&&normalize(row.merchant)==normalize(candidate.merchant)}
+                same.forEach{(index,row)->if(row.amount!=candidate.amount){val score=kotlin.math.abs(total()-row.amount+candidate.amount-declaredTotal);if(score<before)repairs+=Repair(score){result[index]=candidate}}}
+                if(result.count{key(it)==key(candidate)} < availableCounts.getValue(key(candidate))){val score=kotlin.math.abs(total()+candidate.amount-declaredTotal);if(score<before)repairs+=Repair(score){result+=candidate}}
+            }
+            result.withIndex().forEach{(index,row)->val score=kotlin.math.abs(total()-row.amount-declaredTotal);if(score<before)repairs+=Repair(score){result.removeAt(index)}}
+            val best=repairs.minByOrNull{it.score}?:return result.sortedByDescending{it.date}
+            best.apply()
+        }
+        return result.sortedByDescending{it.date}
+    }
+
+    internal fun mergeScaleRows(scales:List<List<CardStatementEntry>>):List<CardStatementEntry>{
+        fun key(row:CardStatementEntry)=Triple(row.date,row.amount,normalize(row.merchant))
+        val maximumCounts=scales.flatMap{rows->rows.groupingBy(::key).eachCount().entries}.groupBy{it.key}.mapValues{(_,counts)->counts.maxOf{it.value}}
+        val examples=scales.flatten().associateBy(::key)
+        return maximumCounts.flatMap{(rowKey,count)->List(count){examples.getValue(rowKey)}}
+    }
 
     fun match(entries: List<CardStatementEntry>, transactions: List<Transaction>, sourceId: String): List<StatementMatch> {
         return ReconciliationMatcher.match(entries, transactions, sourceId)
