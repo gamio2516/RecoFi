@@ -254,12 +254,34 @@ object StatementTools {
                 if (joined.length > 12) break
             }
         }
-        if (start < 0) return null
-        val center = (sorted[start].second + sorted[end].second) / 2
-        val previous = sorted.getOrNull(start - 1)?.second
-        val next = sorted.getOrNull(end + 1)?.second
-        return (previous?.let { (it + center) / 2 } ?: center - 18) to
-            (next?.let { (center + it) / 2 } ?: Int.MAX_VALUE)
+        if (start >= 0) {
+            val center = (sorted[start].second + sorted[end].second) / 2
+            val previous = sorted.getOrNull(start - 1)?.second
+            val next = sorted.getOrNull(end + 1)?.second
+            return (previous?.let { (it + center) / 2 } ?: center - 18) to
+                (next?.let { (center + it) / 2 } ?: Int.MAX_VALUE)
+        }
+
+        // On some devices OCR cannot read the long heading at all. Its two
+        // neighbours are much shorter and stable, so reconstruct the missing
+        // column from "今回回数" and "現地通貨額" instead of rejecting every row.
+        fun phraseCenter(phrase: String): Int? {
+            for (i in normalized.indices) {
+                if (!phrase.startsWith(normalized[i]) && !normalized[i].startsWith(phrase)) continue
+                var joined = ""
+                for (j in i until minOf(normalized.size, i + 3)) {
+                    joined += normalized[j]
+                    if (joined.contains(phrase)) return (sorted[i].second + sorted[j].second) / 2
+                    if (joined.length > phrase.length + 6) break
+                }
+            }
+            return null
+        }
+        val countCenter = phraseCenter("今回回数") ?: return null
+        val currencyCenter = phraseCenter("現地通貨額") ?: return null
+        if (currencyCenter <= countCenter) return null
+        val inferredCenter = (countCenter + currencyCenter) / 2
+        return ((countCenter + inferredCenter) / 2) to ((inferredCenter + currencyCenter) / 2)
     }
 
     private fun findJalBillingZone(text: Text): BillingZone? {
@@ -276,13 +298,13 @@ object StatementTools {
             val row = rows.lastOrNull()
             if (row == null || kotlin.math.abs(row.map { it.centerY }.average() - piece.centerY) > 24) rows += mutableListOf(piece) else row += piece
         }
-        val header = rows.firstOrNull { row ->
-            val joined = row.joinToString("") { it.text }.replace(" ", "")
-            joined.contains("ご利用箇所") &&
-                (joined.contains("今回請求額") || joined.contains("今回ご請求額"))
-        } ?: return null
+        val anchor = pieces.firstOrNull { it.text.replace(" ", "").contains("ご利用箇所") }
+            ?: pieces.firstOrNull { it.text.replace(" ", "").contains("支払区分") }
+            ?: pieces.firstOrNull { it.text.replace(" ", "").contains("現地通貨額") }
+            ?: return null
+        val header = pieces.filter { kotlin.math.abs(it.centerY - anchor.centerY) <= 80 }
         val bounds = jalBillingColumnBounds(header.map { it.text to it.left }) ?: return null
-        return BillingZone(bounds.first, bounds.second, header.map { it.centerY }.average().toInt())
+        return BillingZone(bounds.first, bounds.second, anchor.centerY)
     }
 
     internal fun billingColumnBounds(pieces:List<Pair<String,Int>>):Pair<Int,Int>?{
