@@ -111,6 +111,18 @@ class StatementCsvParserTest {
         assertEquals(950, bounds?.second)
     }
 
+    @Test fun jalBilledAmountCanBeInferredWhenLongHeaderIsUnreadable() {
+        val bounds = StatementTools.jalBillingColumnBounds(
+            listOf(
+                "ご請求額" to 620, "支払区分" to 700,
+                "今回" to 780, "回数" to 820,
+                "現地" to 980, "通貨額" to 1_020
+            )
+        )
+        assertEquals(850, bounds?.first)
+        assertEquals(950, bounds?.second)
+    }
+
     @Test fun missingRequiredHeaderReturnsEmpty() {
         assertTrue(StatementCsvParser.parse("店名,メモ\n店,A", month).isEmpty())
     }
