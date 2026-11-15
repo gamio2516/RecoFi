@@ -83,6 +83,19 @@ class StatementCsvParserTest {
         assertTrue(680 in bounds!!.first until bounds.second)
     }
 
+    @Test fun recognizesJalStatementAndTotal() {
+        assertTrue(StatementTools.isJalStatement("JALカードSuica ご利用代金明細書"))
+        assertEquals(28_978L, StatementTools.parseJalDeclaredTotal("ご請求額合計 28,978"))
+    }
+
+    @Test fun jalUsesTheBilledAmountColumn() {
+        val bounds = StatementTools.jalBillingColumnBounds(
+            listOf("ご利用額" to 400, "払戻額" to 500, "ご請求額" to 600, "支払区分" to 700)
+        )
+        assertEquals(550, bounds?.first)
+        assertEquals(650, bounds?.second)
+    }
+
     @Test fun missingRequiredHeaderReturnsEmpty() {
         assertTrue(StatementCsvParser.parse("店名,メモ\n店,A", month).isEmpty())
     }
