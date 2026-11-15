@@ -42,7 +42,9 @@ object StatementTools {
     }
 
     fun inferStatementMonth(context: Context, uri: Uri, entries: List<CardStatementEntry>): YearMonth {
-        Regex("(20\\d{2})[^0-9]?(0?[1-9]|1[0-2])").find(displayName(context, uri))?.let { found -> return YearMonth.of(found.groupValues[1].toInt(), found.groupValues[2].toInt()) }
+        val name = displayName(context, uri)
+        if (name.contains("ご利用明細") && entries.isNotEmpty()) return YearMonth.from(entries.maxOf { it.date })
+        Regex("(20\\d{2})[^0-9]?(0?[1-9]|1[0-2])").find(name)?.let { found -> return YearMonth.of(found.groupValues[1].toInt(), found.groupValues[2].toInt()) }
         return entries.maxByOrNull { it.date }?.let { YearMonth.from(it.date) } ?: YearMonth.now()
     }
 
@@ -79,8 +81,10 @@ object StatementTools {
                             bitmap.eraseColor(android.graphics.Color.WHITE)
                             page.render(bitmap, null, null, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
                             val result = recognizer.process(InputImage.fromBitmap(bitmap, 0)).awaitResult()
-                            val billingZone = findBillingZone(result)
-                            extractRakutenSummaryAmounts(result.text).forEach(totalCandidates::add)
+                            val isJal = isJalStatement(result.text)
+                            val billingZone = if (isJal) findJalBillingZone(result) else findBillingZone(result)
+                            if (isJal) parseJalDeclaredTotal(result.text)?.let(totalCandidates::add)
+                            else extractRakutenSummaryAmounts(result.text).forEach(totalCandidates::add)
                             // A whole A4 page is large enough that ML Kit can silently omit small
                             // lines even at a high render scale.  Re-read it in overlapping bands;
                             // the overlap prevents a row on a band boundary from being lost.
@@ -101,14 +105,15 @@ object StatementTools {
                                     val coreTop = if (top == 0) 0 else overlap / 2
                                     val coreBottom = if (bottom == bitmap.height) band.height else band.height - overlap / 2
                                     val dataTop = maxOf(coreTop, billingZone.headerCenterY + 10 - top)
-                                    addAll(parseRows(bandResult, targetMonth, billingZone, dataTop, coreBottom))
-                                    extractRakutenSummaryAmounts(bandResult.text).forEach(totalCandidates::add)
+                                    addAll(parseRows(bandResult, targetMonth, billingZone, dataTop, coreBottom, isJal))
+                                    if (isJal) parseJalDeclaredTotal(bandResult.text)?.let(totalCandidates::add)
+                                    else extractRakutenSummaryAmounts(bandResult.text).forEach(totalCandidates::add)
                                     band.recycle()
                                     if (bottom == bitmap.height) break
                                     top = bottom - overlap
                                 }
                             } else {
-                                addAll(parseRows(result, targetMonth, null))
+                                addAll(parseRows(result, targetMonth, null, isJal = isJal))
                                 val bandHeight = 1_200
                                 val overlap = 180
                                 var top = 0
@@ -122,15 +127,18 @@ object StatementTools {
                                         null
                                     )
                                     val bandResult = recognizer.process(InputImage.fromBitmap(band, 0)).awaitResult()
-                                    extractRakutenSummaryAmounts(bandResult.text).forEach(totalCandidates::add)
+                                    if (isJal) parseJalDeclaredTotal(bandResult.text)?.let(totalCandidates::add)
+                                    else extractRakutenSummaryAmounts(bandResult.text).forEach(totalCandidates::add)
                                     band.recycle()
                                     if (bottom == bitmap.height) break
                                     top = bottom - overlap
                                 }
                             }
-                            parseRakutenDeclaredTotal(result)?.let(totalCandidates::add)
-                            parseRakutenDeclaredTotal(result.text)?.let(totalCandidates::add)
-                            if (billingZone == null) parseRakutenSummaryTotal(result.text)?.let(totalCandidates::add)
+                            if (!isJal) {
+                                parseRakutenDeclaredTotal(result)?.let(totalCandidates::add)
+                                parseRakutenDeclaredTotal(result.text)?.let(totalCandidates::add)
+                                if (billingZone == null) parseRakutenSummaryTotal(result.text)?.let(totalCandidates::add)
+                            }
                             bitmap.recycle()
                         }
                     }
@@ -209,6 +217,48 @@ object StatementTools {
 
     private data class BillingZone(val left: Int, val right: Int, val headerCenterY: Int)
 
+    internal fun isJalStatement(text: String): Boolean =
+        text.replace(Regex("[\\s　]+"), "").let { compact ->
+            compact.contains("JALカード") || compact.contains("ご利用代金明細書")
+        }
+
+    internal fun parseJalDeclaredTotal(text: String): Long? {
+        val compact = text.replace(Regex("[\\s　]+"), "")
+        val tail = compact.substringAfter("ご請求額合計", "").take(40)
+        return Regex("[0-9]{1,3}(?:[,，][0-9]{3})+|[0-9]{1,9}").find(tail)
+            ?.value?.replace(Regex("[,，]"), "")?.toLongOrNull()
+    }
+
+    internal fun jalBillingColumnBounds(pieces: List<Pair<String, Int>>): Pair<Int, Int>? {
+        val sorted = pieces.sortedBy { it.second }
+        val index = sorted.indexOfFirst { it.first.replace(" ", "").contains("ご請求額") }
+        if (index < 0) return null
+        val center = sorted[index].second
+        val previous = sorted.getOrNull(index - 1)?.second
+        val next = sorted.getOrNull(index + 1)?.second
+        return (previous?.let { (it + center) / 2 } ?: center - 18) to
+            (next?.let { (center + it) / 2 } ?: Int.MAX_VALUE)
+    }
+
+    private fun findJalBillingZone(text: Text): BillingZone? {
+        data class HeaderPiece(val text: String, val left: Int, val centerY: Int)
+        val pieces = text.textBlocks.flatMap { it.lines }.flatMap { it.elements }.mapNotNull { element ->
+            val box = element.boundingBox ?: return@mapNotNull null
+            HeaderPiece(element.text.trim(), box.left, box.centerY())
+        }.sortedBy { it.centerY }
+        val rows = mutableListOf<MutableList<HeaderPiece>>()
+        pieces.forEach { piece ->
+            val row = rows.lastOrNull()
+            if (row == null || kotlin.math.abs(row.map { it.centerY }.average() - piece.centerY) > 24) rows += mutableListOf(piece) else row += piece
+        }
+        val header = rows.firstOrNull { row ->
+            val joined = row.joinToString("") { it.text }.replace(" ", "")
+            joined.contains("ご利用箇所") && joined.contains("ご請求額")
+        } ?: return null
+        val bounds = jalBillingColumnBounds(header.map { it.text to it.left }) ?: return null
+        return BillingZone(bounds.first, bounds.second, header.map { it.centerY }.average().toInt())
+    }
+
     internal fun billingColumnBounds(pieces:List<Pair<String,Int>>):Pair<Int,Int>?{
         val sorted=pieces.sortedBy{it.second}
         val combinedIndex=sorted.indexOfFirst{it.first.replace(" ","").contains("当月請求額")}
@@ -252,7 +302,8 @@ object StatementTools {
         month: YearMonth,
         billingZone: BillingZone? = findBillingZone(text),
         minCenterY: Int = Int.MIN_VALUE,
-        maxCenterYExclusive: Int = Int.MAX_VALUE
+        maxCenterYExclusive: Int = Int.MAX_VALUE,
+        isJal: Boolean = false
     ): List<CardStatementEntry> {
         data class Piece(val text: String, val left: Int, val centerY: Int)
         val pieces = text.textBlocks.flatMap { it.lines }.flatMap { it.elements }.mapNotNull { element ->
@@ -271,11 +322,11 @@ object StatementTools {
             if (rowCenterY < minCenterY || rowCenterY >= maxCenterYExclusive) return@mapNotNull null
             val sorted = row.sortedBy { it.left }
             val amount = sorted.firstOrNull { it.left >= zone.left && it.left < zone.right && parseMoney(it.text) != null }?.text?.let(::parseMoney) ?: return@mapNotNull null
-            parseRow(sorted.joinToString(" ") { it.text }, month, amount)
+            parseRow(sorted.joinToString(" ") { it.text }, month, amount, isJal)
         }
     }
 
-    private fun parseRow(raw: String, month: YearMonth, billingAmount: Long): CardStatementEntry? {
+    private fun parseRow(raw: String, month: YearMonth, billingAmount: Long, isJal: Boolean = false): CardStatementEntry? {
         val dateMatch = Regex("(?<!\\d)(?:(\\d{2,4})[./年\\s-]+)?(\\d{1,2})[./月\\s-]+(\\d{1,2})(?:日)?").find(raw) ?: return null
         val parsedYear = dateMatch.groupValues[1].toIntOrNull()
         val year = when { parsedYear == null -> month.year; parsedYear < 100 -> 2000 + parsedYear; else -> parsedYear }
@@ -286,7 +337,7 @@ object StatementTools {
         if (billingAmount <= 0) return null
         val firstNumber = Regex("(?<![\\d,])[0-9][0-9,]*(?![\\d,])").find(tail)
         val merchant = tail.substring(0, firstNumber?.range?.first ?: tail.length)
-            .replace(Regex("\\s+"), " ").trim(' ', '・', '-')
+            .replace(Regex("\\s+"), " ").trim(' ', '・', '-', '★', '●', '■')
         if (merchant.isBlank()) return null
         return CardStatementEntry(date, billingAmount, merchant, raw)
     }
