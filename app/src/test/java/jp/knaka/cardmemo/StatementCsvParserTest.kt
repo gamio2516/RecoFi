@@ -44,9 +44,43 @@ class StatementCsvParserTest {
         assertEquals(300929L, StatementTools.parseRakutenSummaryTotal("9月お支払予定金額 300.929 本カード会員様利用分 300.929"))
     }
 
-    @Test fun duplicateRowsAreRemovedUsingNormalizedMerchant() {
+    @Test fun repairsAmountFromAnotherResolutionToMatchPrintedTotal() {
+        val date = LocalDate.of(2026, 1, 10)
+        val selected = listOf(
+            CardStatementEntry(date, 984, "PAYPAL *KOPEKJP", ""),
+            CardStatementEntry(date.minusDays(1), 1_000, "OTHER", ""),
+        )
+        val alternate = selected + CardStatementEntry(date, 5_984, "PAYPAL *KOPEKJP", "")
+        val repaired = StatementTools.reconcileScaleResults(selected, alternate, 6_984)
+        assertEquals(6_984, repaired.sumOf { it.amount })
+        assertEquals(5_984, repaired.first { it.merchant == "PAYPAL *KOPEKJP" }.amount)
+    }
+
+    @Test fun addsRowSeenOnlyAtAnotherResolutionToMatchPrintedTotal() {
+        val selected = listOf(CardStatementEntry(LocalDate.of(2026, 1, 10), 1_000, "A", ""))
+        val alternate = selected + CardStatementEntry(LocalDate.of(2026, 1, 9), 5_000, "B", "")
+        val repaired = StatementTools.reconcileScaleResults(selected, alternate, 6_000)
+        assertEquals(listOf(1_000L, 5_000L), repaired.map { it.amount })
+    }
+
+    @Test fun identicalPurchasesArePreserved() {
         val csv = "日付,加盟店名,金額\n7/1,STAR BUCKS,500\n7/1,starbucks,500"
-        assertEquals(1, StatementCsvParser.parse(csv, month).size)
+        assertEquals(2, StatementCsvParser.parse(csv, month).size)
+    }
+
+    @Test fun identicalRowsSeenTwiceAtOneResolutionAreNotCollapsed() {
+        val row = CardStatementEntry(LocalDate.of(2026, 7, 4), 11_000, "同一店舗", "")
+        val merged = StatementTools.mergeScaleRows(listOf(listOf(row), listOf(row, row), listOf(row)))
+        val repaired = StatementTools.reconcileScaleResults(listOf(row), merged, 22_000)
+        assertEquals(2, repaired.size)
+        assertEquals(22_000, repaired.sumOf { it.amount })
+    }
+
+    @Test fun splitCurrentBillingHeaderUsesTheWholeColumn() {
+        val bounds=StatementTools.billingColumnBounds(listOf("支払総額" to 500,"当月" to 600,"請求額" to 660,"翌月繰越" to 760))
+        assertEquals(565,bounds?.first)
+        assertEquals(695,bounds?.second)
+        assertTrue(680 in bounds!!.first until bounds.second)
     }
 
     @Test fun missingRequiredHeaderReturnsEmpty() {
