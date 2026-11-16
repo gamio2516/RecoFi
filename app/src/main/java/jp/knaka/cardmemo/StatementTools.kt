@@ -68,6 +68,8 @@ object StatementTools {
         return StatementCsvParser.parse(text, targetMonth)
     }
     suspend fun readRakutenPdf(context: Context, uri: Uri, targetMonth: YearMonth): ReadResult {
+        val sourceFileName = displayName(context, uri)
+        val jalByFileName = isLikelyJalFileName(sourceFileName)
         val descriptor = context.contentResolver.openFileDescriptor(uri, "r") ?: return ReadResult(emptyList())
         val recognizer = TextRecognition.getClient(JapaneseTextRecognizerOptions.Builder().build())
         return descriptor.use { pfd ->
@@ -81,8 +83,15 @@ object StatementTools {
                             bitmap.eraseColor(android.graphics.Color.WHITE)
                             page.render(bitmap, null, null, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
                             val result = recognizer.process(InputImage.fromBitmap(bitmap, 0)).awaitResult()
-                            val isJal = isJalStatement(result.text)
-                            val billingZone = if (isJal) findJalBillingZone(result) else findBillingZone(result)
+                            val isJal = jalByFileName || isJalStatement(result.text)
+                            // JAL's table layout is fixed. Do not make the import
+                            // depend on OCR successfully reading its very small,
+                            // multi-line heading; Pixel devices can omit it while
+                            // still recognizing every transaction row.
+                            val billingZone = if (isJal) {
+                                val bounds = jalFallbackBillingBounds(bitmap.width)
+                                BillingZone(bounds.first, bounds.second, (bitmap.height * 0.40f).toInt())
+                            } else findBillingZone(result)
                             if (isJal) parseJalDeclaredTotal(result.text)?.let(totalCandidates::add)
                             else extractRakutenSummaryAmounts(result.text).forEach(totalCandidates::add)
                             // A whole A4 page is large enough that ML Kit can silently omit small
@@ -221,6 +230,14 @@ object StatementTools {
         text.replace(Regex("[\\s　]+"), "").let { compact ->
             compact.contains("JALカード") || compact.contains("ご利用代金明細書")
         }
+
+    internal fun isLikelyJalFileName(fileName: String): Boolean {
+        val normalized = fileName.lowercase().replace(Regex("[\\s　]+"), "")
+        return normalized.contains("jal") || normalized.startsWith("ご利用明細_")
+    }
+
+    internal fun jalFallbackBillingBounds(pageWidth: Int): Pair<Int, Int> =
+        (pageWidth * 0.66f).toInt() to (pageWidth * 0.77f).toInt()
 
     internal fun parseJalDeclaredTotal(text: String): Long? {
         val compact = text.replace(Regex("[\\s　]+"), "")
