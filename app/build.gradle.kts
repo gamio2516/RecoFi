@@ -32,11 +32,14 @@ android {
         applicationId = "jp.knaka.cardmemo"
         minSdk = 26
         targetSdk = 36
-        versionCode = 2
-        versionName = "1.1"
+        versionCode = 20
+        versionName = "20"
     }
 
-    buildFeatures { compose = true }
+    buildFeatures {
+        compose = true
+        buildConfig = true
+    }
     sourceSets.getByName("androidTest").assets.srcDir("$projectDir/schemas")
     testOptions { unitTests.isIncludeAndroidResources = true }
 
@@ -110,3 +113,4 @@ dependencies {
     testImplementation("androidx.test:core:1.7.0")
     testImplementation("org.robolectric:robolectric:4.16.1")
 }
+
