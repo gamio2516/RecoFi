@@ -88,6 +88,16 @@ class StatementCsvParserTest {
         assertEquals(28_978L, StatementTools.parseJalDeclaredTotal("ご請求額合計 28,978"))
     }
 
+    @Test fun recognizesJalStatementFileNameWithoutOcrText() {
+        assertTrue(StatementTools.isLikelyJalFileName("ご利用明細_202603.pdf"))
+        assertTrue(!StatementTools.isLikelyJalFileName("statement_202603.pdf"))
+    }
+
+    @Test fun jalFixedLayoutSelectsTheActualMonthlyBillingColumn() {
+        assertEquals(660, StatementTools.jalFallbackBillingBounds(1_000).first)
+        assertEquals(770, StatementTools.jalFallbackBillingBounds(1_000).second)
+    }
+
     @Test fun jalUsesTheBilledAmountColumn() {
         val bounds = StatementTools.jalBillingColumnBounds(
             listOf(
