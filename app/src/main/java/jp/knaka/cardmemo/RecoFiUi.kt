@@ -357,6 +357,15 @@ internal fun CardMemoApp(vm: MainViewModel = viewModel()) {
                 item { SettingsSectionTitle("データ管理") }
                 item { SettingsMenuItem("バックアップと復元", "すべてのデータを安全に保存・復元") { page = SettingsPage.BACKUP } }
                 item { SettingsMenuItem("CSVエクスポート", "月ごとの明細をCSVで保存") { page = SettingsPage.EXPORT } }
+                item {
+                    Text(
+                        "RecoFi v${BuildConfig.VERSION_NAME}",
+                        modifier = Modifier.fillMaxWidth().padding(top = 18.dp, bottom = 10.dp),
+                        color = Color.Gray,
+                        fontSize = 12.sp,
+                        textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                    )
+                }
             }
             SettingsPage.SOURCES -> PaymentSourceSettings(sources, defaultSourceId, vm::setDefaultPaymentSource, vm::addPaymentSource, vm::editPaymentSource, vm::deletePaymentSource)
             SettingsPage.CATEGORIES -> StringSettings("支出カテゴリ", "新しいカテゴリ", categories, vm::addCategory, vm::deleteCategory,vm::reorderCategories,vm::renameCategory)
