@@ -94,7 +94,10 @@ object StatementTools {
                                 val bounds = jalFallbackBillingBounds(bitmap.width)
                                 BillingZone(bounds.first, bounds.second, (bitmap.height * 0.40f).toInt())
                             } else findBillingZone(result)
-                            if (isJal) parseJalDeclaredTotal(result.text)?.let(totalCandidates::add)
+                            if (isJal) {
+                                parseJalDeclaredTotal(result)?.let(totalCandidates::add)
+                                parseJalDeclaredTotal(result.text)?.let(totalCandidates::add)
+                            }
                             else extractRakutenSummaryAmounts(result.text).forEach(totalCandidates::add)
                             // A whole A4 page is large enough that ML Kit can silently omit small
                             // lines even at a high render scale.  Re-read it in overlapping bands;
@@ -117,7 +120,10 @@ object StatementTools {
                                     val coreBottom = if (bottom == bitmap.height) band.height else band.height - overlap / 2
                                     val dataTop = maxOf(coreTop, billingZone.headerCenterY + 10 - top)
                                     addAll(parseRows(bandResult, targetMonth, billingZone, dataTop, coreBottom, isJal))
-                                    if (isJal) parseJalDeclaredTotal(bandResult.text)?.let(totalCandidates::add)
+                                    if (isJal) {
+                                        parseJalDeclaredTotal(bandResult)?.let(totalCandidates::add)
+                                        parseJalDeclaredTotal(bandResult.text)?.let(totalCandidates::add)
+                                    }
                                     else extractRakutenSummaryAmounts(bandResult.text).forEach(totalCandidates::add)
                                     band.recycle()
                                     if (bottom == bitmap.height) break
@@ -138,7 +144,10 @@ object StatementTools {
                                         null
                                     )
                                     val bandResult = recognizer.process(InputImage.fromBitmap(band, 0)).awaitResult()
-                                    if (isJal) parseJalDeclaredTotal(bandResult.text)?.let(totalCandidates::add)
+                                    if (isJal) {
+                                        parseJalDeclaredTotal(bandResult)?.let(totalCandidates::add)
+                                        parseJalDeclaredTotal(bandResult.text)?.let(totalCandidates::add)
+                                    }
                                     else extractRakutenSummaryAmounts(bandResult.text).forEach(totalCandidates::add)
                                     band.recycle()
                                     if (bottom == bitmap.height) break
@@ -248,15 +257,35 @@ object StatementTools {
         val lines = text.lineSequence().map { it.replace(Regex("[\\s　]+"), "") }.filter(String::isNotBlank).toList()
         val labels = listOf("今回請求額合計", "ご請求額合計", "お支払額")
         labels.forEach { label ->
-            lines.forEachIndexed { index, line ->
+        lines.forEach { line ->
                 val labelIndex = line.indexOf(label)
-                if (labelIndex < 0) return@forEachIndexed
+                if (labelIndex < 0) return@forEach
                 val sameLine = parseJalTotalAmount(line.substring(labelIndex + label.length))
                 if (sameLine != null) return sameLine
-                // ML Kit sometimes emits the label and its adjacent value as two
-                // lines. Only inspect the immediate next line so explanatory text
-                // later on the page cannot become the statement total.
-                parseJalTotalAmount(lines.getOrNull(index + 1).orEmpty())?.let { return it }
+            }
+        }
+        return null
+    }
+
+    private fun parseJalDeclaredTotal(text: Text): Long? {
+        data class LocatedLine(val text: String, val left: Int, val right: Int, val centerY: Int, val height: Int)
+        val lines = text.textBlocks.flatMap { it.lines }.mapNotNull { line ->
+            val box = line.boundingBox ?: return@mapNotNull null
+            LocatedLine(line.text.replace(Regex("[\\s　]+"), ""), box.left, box.right, box.centerY(), box.height())
+        }
+        val labels = listOf("今回請求額合計", "ご請求額合計", "お支払額")
+        labels.forEach { label ->
+            lines.filter { it.text.contains(label) }.forEach { anchor ->
+                parseJalTotalAmount(anchor.text.substringAfter(label, ""))?.let { return it }
+                val candidates = lines.asSequence()
+                    .filter { it !== anchor }
+                    .filter { it.left >= anchor.right - 16 }
+                    .filter { kotlin.math.abs(it.centerY - anchor.centerY) <= maxOf(anchor.height, it.height) }
+                    .mapNotNull { candidate -> parseJalTotalAmount(candidate.text)?.let { candidate to it } }
+                    .toList()
+                candidates.minByOrNull { (candidate, _) ->
+                    kotlin.math.abs(candidate.centerY - anchor.centerY) * 10_000 + kotlin.math.abs(candidate.left - anchor.right)
+                }?.second?.let { return it }
             }
         }
         return null
