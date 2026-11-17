@@ -21,5 +21,10 @@ class JalStatementAccuracyTest {
         val text = "お支払額 28,978円\nご案内 30,000円コース"
         assertEquals(28_978L, StatementTools.parseJalDeclaredTotal(text))
     }
+
+    @Test fun amountOnUnrelatedFollowingLineIsNotAStatementTotal() {
+        val text = "お支払額\nご案内 30,000円コース"
+        assertEquals(null, StatementTools.parseJalDeclaredTotal(text))
+    }
 }
 
