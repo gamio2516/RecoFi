@@ -76,6 +76,7 @@ object StatementTools {
             PdfRenderer(pfd).use { renderer ->
                 suspend fun recognize(scale: Int): ReadResult {
                     val totalCandidates = mutableListOf<Long>()
+                    var sawJalStatement = jalByFileName
                     val rows = buildList {
                     for (pageIndex in 0 until renderer.pageCount) {
                         renderer.openPage(pageIndex).use { page ->
@@ -84,6 +85,7 @@ object StatementTools {
                             page.render(bitmap, null, null, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
                             val result = recognizer.process(InputImage.fromBitmap(bitmap, 0)).awaitResult()
                             val isJal = jalByFileName || isJalStatement(result.text)
+                            sawJalStatement = sawJalStatement || isJal
                             // JAL's table layout is fixed. Do not make the import
                             // depend on OCR successfully reading its very small,
                             // multi-line heading; Pixel devices can omit it while
@@ -152,15 +154,18 @@ object StatementTools {
                         }
                     }
                     }
-                    val declaredTotal = totalCandidates.filterNot { it in 2_000L..2_099L }.maxOrNull()
+                    val declaredTotal = selectDeclaredTotal(totalCandidates, rows.sumOf { it.amount }, sawJalStatement)
                     return ReadResult(rows, declaredTotal)
                 }
-                val first = recognize(4)
+                // JAL uses a very small, tightly spaced table font. Render above the
+                // device-independent PDF resolution first, then fall back only when
+                // the statement total proves that another pass is necessary.
+                val first = recognize(5)
                 if (first.declaredTotal != null && first.entries.sumOf { it.amount } == first.declaredTotal) return@use first
-                val second = recognize(3)
+                val second = recognize(4)
                 val knownTotal = first.declaredTotal ?: second.declaredTotal
                 if (knownTotal != null && second.entries.sumOf { it.amount } == knownTotal) return@use second.copy(declaredTotal = knownTotal)
-                val third = recognize(2)
+                val third = recognize(3)
                 val candidates = listOf(first, second, third)
                 val total = knownTotal ?: third.declaredTotal
                 val selected = if (total != null) {
@@ -240,12 +245,36 @@ object StatementTools {
         (pageWidth * 0.66f).toInt() to (pageWidth * 0.77f).toInt()
 
     internal fun parseJalDeclaredTotal(text: String): Long? {
-        val compact = text.replace(Regex("[\\s　]+"), "")
-        return listOf("今回請求額合計", "ご請求額合計", "お支払額").firstNotNullOfOrNull { label ->
-            val tail = compact.substringAfter(label, "").take(40)
-            Regex("[0-9]{1,3}(?:[,，][0-9]{3})+|[0-9]{1,9}").find(tail)
-                ?.value?.replace(Regex("[,，]"), "")?.toLongOrNull()
+        val lines = text.lineSequence().map { it.replace(Regex("[\\s　]+"), "") }.filter(String::isNotBlank).toList()
+        val labels = listOf("今回請求額合計", "ご請求額合計", "お支払額")
+        labels.forEach { label ->
+            lines.forEachIndexed { index, line ->
+                val labelIndex = line.indexOf(label)
+                if (labelIndex < 0) return@forEachIndexed
+                val sameLine = parseJalTotalAmount(line.substring(labelIndex + label.length))
+                if (sameLine != null) return sameLine
+                // ML Kit sometimes emits the label and its adjacent value as two
+                // lines. Only inspect the immediate next line so explanatory text
+                // later on the page cannot become the statement total.
+                parseJalTotalAmount(lines.getOrNull(index + 1).orEmpty())?.let { return it }
+            }
         }
+        return null
+    }
+
+    private fun parseJalTotalAmount(value: String): Long? =
+        Regex("[0-9]{1,3}(?:[,，][0-9]{3})+|[0-9]{4,9}").find(value)
+            ?.value?.replace(Regex("[,，]"), "")?.toLongOrNull()
+
+    internal fun selectDeclaredTotal(candidates: List<Long>, rowTotal: Long, isJal: Boolean): Long? {
+        val usable = candidates.filter { it > 0 && it !in 2_000L..2_099L }
+        if (usable.isEmpty()) return null
+        if (!isJal) return usable.maxOrNull()
+        val counts = usable.groupingBy { it }.eachCount()
+        return counts.keys.minWithOrNull(
+            compareBy<Long> { kotlin.math.abs(it - rowTotal) }
+                .thenByDescending { counts.getValue(it) }
+        )
     }
 
     internal fun jalBillingColumnBounds(pieces: List<Pair<String, Int>>): Pair<Int, Int>? {
@@ -386,9 +415,27 @@ object StatementTools {
             val rowCenterY = row.map { it.centerY }.average()
             if (rowCenterY < minCenterY || rowCenterY >= maxCenterYExclusive) return@mapNotNull null
             val sorted = row.sortedBy { it.left }
-            val amount = sorted.firstOrNull { it.left >= zone.left && it.left < zone.right && parseMoney(it.text) != null }?.text?.let(::parseMoney) ?: return@mapNotNull null
+            val amount = combineMoneyPieces(sorted.map { it.text to it.left }, zone.left, zone.right) ?: return@mapNotNull null
             parseRow(sorted.joinToString(" ") { it.text }, month, amount, isJal)
         }
+    }
+
+    internal fun combineMoneyPieces(pieces: List<Pair<String, Int>>, zoneLeft: Int, zoneRight: Int): Long? {
+        val inside = pieces.asSequence()
+            .filter { (_, x) -> x >= zoneLeft && x < zoneRight }
+            .mapNotNull { (text, x) -> text.filter(Char::isDigit).takeIf(String::isNotBlank)?.let { x to it } }
+            .sortedBy { it.first }
+            .toList()
+        if (inside.isEmpty()) return null
+        // OCR frequently separates a printed comma-grouped amount: "5,841"
+        // becomes ["5", "841"]. Rejoin consecutive groups before parsing.
+        val joined = buildString {
+            inside.forEachIndexed { index, (_, digits) ->
+                if (index == 0 || digits.length == 3) append(digits)
+            }
+        }
+        return joined.toLongOrNull()?.let { kotlin.math.abs(it) }?.takeIf { it > 0 }
+            ?: inside.firstNotNullOfOrNull { (_, digits) -> digits.toLongOrNull()?.takeIf { it > 0 } }
     }
 
     private fun parseRow(raw: String, month: YearMonth, billingAmount: Long, isJal: Boolean = false): CardStatementEntry? {
