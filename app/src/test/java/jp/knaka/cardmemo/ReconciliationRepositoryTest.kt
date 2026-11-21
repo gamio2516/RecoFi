@@ -91,9 +91,17 @@ class ReconciliationRepositoryTest {
     @Test fun `missing transaction is created only by explicit save and confirmed atomically`() {
         assertTrue(db.transactions().loadAll().isEmpty())
         repository.createAndConfirm(101, tx(9))
-        assertEquals(1, db.transactions().loadAll().size)
-        assertEquals(9L, db.reconciliation().loadMatch(101)?.transactionId)
+        val created = db.transactions().loadAll().single()
+        assertEquals(created.id, db.reconciliation().loadMatch(101)?.transactionId)
         assertEquals(ReconciliationStatus.CONFIRMED.name, db.reconciliation().loadMatch(101)?.status)
+    }
+
+    @Test fun `missing transaction gets a fresh id even when supplied id is already used`() {
+        persist(tx(9))
+        repository.createAndConfirm(101, tx(9))
+        val ids = db.transactions().loadAll().map { it.id }
+        assertEquals(2, ids.distinct().size)
+        assertNotEquals(9L, db.reconciliation().loadMatch(101)?.transactionId)
     }
 
     @Test fun `credit card requires import or explicit no activity declaration`() {
@@ -108,4 +116,24 @@ class ReconciliationRepositoryTest {
         db.statements().deleteStatement("hash")
         assertTrue(repository.canLock(month, listOf(PaymentSource("cash", "現金", PaymentSourceType.CASH))).isEmpty())
     }
+
+    @Test fun `transactions linked to next statement are excluded from current month total`() {
+        persist(tx(1), tx(2).copy(amount = 300, usedAt = LocalDate.of(2026, 8, 29).atStartOfDay(ZoneId.systemDefault()).toInstant().toEpochMilli()))
+        repository.confirm(101, 1)
+        db.statements().upsertStatements(listOf(ImportedStatementEntity("next", "2026-09", "card", "next.csv", 300)))
+        db.statements().upsertEntries(listOf(StatementEntryEntity(102, "next", 0, "2026-08-29", 300, "ETC", "raw")))
+        repository.confirm(102, 2)
+
+        assertEquals(1200L, repository.reconciliationTotal(month, "card"))
+    }
+
+    @Test fun `month cannot be locked while statement and reconciliation totals differ`() {
+        persist(tx())
+        repository.confirm(101, 1)
+        db.statements().upsertStatements(listOf(ImportedStatementEntity("hash", month.toString(), "card", "statement.csv", 1300)))
+
+        val blocker = repository.canLock(month, listOf(PaymentSource("card", "楽天カード", PaymentSourceType.CREDIT_CARD))).single()
+        assertEquals(100L, blocker.amountDifference)
+    }
 }
+
