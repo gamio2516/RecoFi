@@ -76,7 +76,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun declareNoActivity(month:YearMonth,sourceId:String){reconciliationRepository.declareNoActivity(month,sourceId);refreshReconciliation()}
     fun reviewRows(fileHash:String)=reconciliationRepository.reviewRows(fileHash)
     fun runAutoReconciliation(fileHash:String,sourceId:String,month:YearMonth){if(month.toString() in _lockedMonths.value)return;reconciliationRepository.autoMatch(fileHash,sourceId,_transactions.value);refreshReconciliation()}
-    fun confirmMatch(entryId:Long,transactionId:Long){reconciliationRepository.confirm(entryId,transactionId);refreshReconciliation()}
+    fun confirmMatch(entryId:Long,transactionId:Long):String?=runCatching{reconciliationRepository.confirm(entryId,transactionId);refreshReconciliation()}.exceptionOrNull()?.let{it.message?:"明細を紐づけできませんでした"}
     fun rejectMatch(entryId:Long,transactionId:Long){reconciliationRepository.reject(entryId,transactionId);refreshReconciliation()}
     fun createMissingAndConfirm(entryId:Long,amount:Long,category:String,merchant:String,description:String,usedAt:Long,sourceId:String):String?=runCatching{
         val month=YearMonth.from(Instant.ofEpochMilli(usedAt).atZone(ZoneId.systemDefault()));require(month.toString() !in _lockedMonths.value){"この月はロックされています"}
