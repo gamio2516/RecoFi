@@ -72,6 +72,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         settingsRepository.saveLockedMonths(_lockedMonths.value)
     }
     fun lockBlockers(month:YearMonth)=reconciliationRepository.canLock(month,_paymentSources.value)
+    fun reconciliationTotal(month:YearMonth,sourceId:String)=reconciliationRepository.reconciliationTotal(month,sourceId)
     fun declareNoActivity(month:YearMonth,sourceId:String){reconciliationRepository.declareNoActivity(month,sourceId);refreshReconciliation()}
     fun reviewRows(fileHash:String)=reconciliationRepository.reviewRows(fileHash)
     fun runAutoReconciliation(fileHash:String,sourceId:String,month:YearMonth){if(month.toString() in _lockedMonths.value)return;reconciliationRepository.autoMatch(fileHash,sourceId,_transactions.value);refreshReconciliation()}
