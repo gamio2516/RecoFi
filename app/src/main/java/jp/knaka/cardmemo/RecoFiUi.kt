@@ -667,9 +667,19 @@ internal fun CardMemoApp(vm: MainViewModel = viewModel()) {
     alternativeEntry?.let { entry ->
         val entryDate = LocalDate.parse(entry.date)
         val choices = transactions.filter { it.paymentSourceId == sourceId && it.amount == entry.amount && kotlin.math.abs(java.time.temporal.ChronoUnit.DAYS.between(Instant.ofEpochMilli(it.usedAt).atZone(ZoneId.systemDefault()).toLocalDate(), entryDate)) <= 7 }
-        AlertDialog(onDismissRequest = { alternativeEntry = null }, title = { Text("別の明細を選ぶ") }, text = { Column(Modifier.heightIn(max = 360.dp).verticalScroll(rememberScrollState())) { if (choices.isEmpty()) Text("条件に合うRecoFi明細がありません。") else choices.forEach { tx -> TextButton(onClick = { val error=vm?.confirmMatch(entry.id, tx.id);if(error==null){alternativeEntry = null; reviewVersion++}else status="紐づけできませんでした：$error" }, modifier = Modifier.fillMaxWidth()) { Text("${Instant.ofEpochMilli(tx.usedAt).atZone(ZoneId.systemDefault()).toLocalDate()}　${tx.merchant}　${yen(tx.amount)}") } } } }, confirmButton = { TextButton(onClick = { alternativeEntry = null }) { Text("閉じる") } })
+        ManualReconciliationDialog(entry,choices,{alternativeEntry=null}){transactionId->val error=vm?.confirmMatch(entry.id,transactionId);if(error==null){alternativeEntry=null;reviewVersion++;status="${entry.date} ${yen(entry.amount)}を消込しました"};error}
     }
     missingEntry?.let { entry -> MissingTransactionDialog(entry, vm?.categories?.value.orEmpty(), { missingEntry = null }) { category, description -> val usedAt=LocalDate.parse(entry.date).atStartOfDay(ZoneId.systemDefault()).toInstant().toEpochMilli();val error=vm?.createMissingAndConfirm(entry.id,entry.amount,category,entry.merchant,description,usedAt,sourceId);if(error==null){missingEntry=null;reviewVersion++;status="${entry.date} ${yen(entry.amount)}を登録して消込しました"}else status="登録できませんでした：$error" } }
+}
+
+@Composable private fun ManualReconciliationDialog(entry:jp.knaka.cardmemo.storage.StatementEntryEntity,choices:List<Transaction>,dismiss:()->Unit,select:(Long)->String?){
+    var error by remember(entry.id){mutableStateOf<String?>(null)}
+    var workingId by remember(entry.id){mutableStateOf<Long?>(null)}
+    AlertDialog(onDismissRequest={if(workingId==null)dismiss()},title={Text("別の明細を選ぶ")},text={Column(Modifier.heightIn(max=400.dp).verticalScroll(rememberScrollState()),verticalArrangement=Arrangement.spacedBy(6.dp)){
+        Text("カード明細：${entry.date}　${entry.merchant}　${yen(entry.amount)}",fontSize=12.sp,color=Color.Gray)
+        if(choices.isEmpty())Text("条件に合うRecoFi明細がありません。") else choices.forEach{tx->TextButton(enabled=workingId==null,onClick={workingId=tx.id;error=select(tx.id);if(error!=null)workingId=null},modifier=Modifier.fillMaxWidth()){Text("${if(workingId==tx.id)"処理中…　" else ""}${Instant.ofEpochMilli(tx.usedAt).atZone(ZoneId.systemDefault()).toLocalDate()}　${tx.merchant}　${yen(tx.amount)}")}}
+        error?.let{Text("消込できませんでした：$it",color=Color(0xFFE14964),fontSize=12.sp,fontWeight=FontWeight.Bold)}
+    }},confirmButton={TextButton(enabled=workingId==null,onClick=dismiss){Text("閉じる")}})
 }
 
 @Composable private fun MissingTransactionDialog(entry: jp.knaka.cardmemo.storage.StatementEntryEntity, categories: List<String>, dismiss: () -> Unit, save: (String, String) -> Unit) {
