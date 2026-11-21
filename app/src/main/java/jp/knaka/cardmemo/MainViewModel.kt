@@ -93,6 +93,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun reconciliationTotal(month:YearMonth,sourceId:String)=reconciliationRepository.reconciliationTotal(month,sourceId)
     fun declareNoActivity(month:YearMonth,sourceId:String){reconciliationRepository.declareNoActivity(month,sourceId);refreshReconciliation()}
     fun reviewRows(fileHash:String)=reconciliationRepository.reviewRows(fileHash)
+    fun refreshReconciliationState()=refreshReconciliation()
     fun runAutoReconciliation(fileHash:String,sourceId:String,month:YearMonth){if(month.toString() in _lockedMonths.value)return;reconciliationRepository.autoMatch(fileHash,sourceId,_transactions.value);refreshReconciliation()}
     fun confirmMatch(entryId:Long,transactionId:Long):String?=runCatching{
         val db=StorageProvider.database(getApplication());val entry=db.statements().loadEntry(entryId)?:error("カード明細が見つかりません");val transaction=_transactions.value.firstOrNull{it.id==transactionId}?:error("RecoFi明細が見つかりません");val imported=_importedStatements.value.firstOrNull{it.fileHash==entry.fileHash}?:error("取込ファイルが見つかりません")
