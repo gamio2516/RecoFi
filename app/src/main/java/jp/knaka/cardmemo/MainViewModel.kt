@@ -59,10 +59,28 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun deleteTransaction(id: Long) {val target=_transactions.value.firstOrNull{it.id==id}?:return;val month=target.yearMonth().toString();if(month in _lockedMonths.value)return;target.recurringId?.let{settingsRepository.suppressRecurringOccurrence(it,month)};updateTransactions(_transactions.value.filterNot { it.id == id })}
-    fun toggleConfirmed(id: Long) {
-        val db=StorageProvider.database(getApplication());val match=db.reconciliation().loadMatches().firstOrNull{it.transactionId==id}?:return;val statement=db.statements().loadEntry(match.statementEntryId)?:return;val imported=_importedStatements.value.firstOrNull{it.fileHash==statement.fileHash}?:return;if(imported.statementMonth in _lockedMonths.value)return
-        if(match.status==ReconciliationStatus.SUGGESTED.name)reconciliationRepository.confirm(match.statementEntryId,id) else if(match.status==ReconciliationStatus.CONFIRMED.name){val now=System.currentTimeMillis();db.reconciliation().upsertMatch(match.copy(status=ReconciliationStatus.SUGGESTED.name,updatedAt=now,confirmedAt=null))}else return;refreshReconciliation()
-    }
+    fun toggleConfirmed(id: Long):String?=runCatching {
+        val db=StorageProvider.database(getApplication())
+        val transaction=_transactions.value.firstOrNull{it.id==id}?:error("RecoFi明細が見つかりません")
+        val existing=db.reconciliation().loadMatches().firstOrNull{it.transactionId==id}
+        if(existing!=null){
+            val statementEntry=db.statements().loadEntry(existing.statementEntryId)?:error("カード明細が見つかりません")
+            val imported=_importedStatements.value.firstOrNull{it.fileHash==statementEntry.fileHash}?:error("取込ファイルが見つかりません")
+            check(imported.statementMonth !in _lockedMonths.value){"この月はロックされています"}
+            if(existing.status==ReconciliationStatus.SUGGESTED.name)reconciliationRepository.confirm(existing.statementEntryId,id)
+            else if(existing.status==ReconciliationStatus.CONFIRMED.name){val now=System.currentTimeMillis();db.reconciliation().upsertMatch(existing.copy(status=ReconciliationStatus.SUGGESTED.name,updatedAt=now,confirmedAt=null))}
+            else error("この明細はチェックで変更できません")
+        }else{
+            val month=transaction.yearMonth();check(month.toString() !in _lockedMonths.value){"この月はロックされています"}
+            val imported=_importedStatements.value.lastOrNull{it.statementMonth==month.toString()&&it.paymentSourceId==transaction.paymentSourceId}?:error("この月のカード明細が取り込まれていません")
+            val usedEntryIds=db.reconciliation().loadMatches().filter{it.transactionId!=null}.mapTo(hashSetOf()){it.statementEntryId}
+            val transactionDate=Instant.ofEpochMilli(transaction.usedAt).atZone(ZoneId.systemDefault()).toLocalDate()
+            val candidates=db.statements().loadEntries().filter{entry->entry.fileHash==imported.fileHash&&entry.id !in usedEntryIds&&entry.amount==transaction.amount}.map{it to kotlin.math.abs(java.time.temporal.ChronoUnit.DAYS.between(transactionDate,LocalDate.parse(it.date)))}.filter{it.second<=7}
+            val exact=candidates.filter{it.second==0L};val selected=when{exact.size==1->exact.single().first;exact.size>1->error("同じ日付・金額のカード明細が複数あります。照合画面で選んでください");candidates.size==1->candidates.single().first;candidates.isEmpty()->error("同じ日付・金額のカード明細が見つかりません");else->error("候補が複数あります。照合画面で選んでください")}
+            reconciliationRepository.confirm(selected.id,id)
+        }
+        refreshReconciliation()
+    }.exceptionOrNull()?.let{it.message?:"消込状態を変更できませんでした"}
     fun confirmTransactions(ids: Set<Long>, statementMonth: YearMonth) {
         if(statementMonth.toString() in _lockedMonths.value)return;val db=StorageProvider.database(getApplication());db.reconciliation().loadMatches().filter{it.transactionId in ids&&it.status==ReconciliationStatus.SUGGESTED.name}.forEach{reconciliationRepository.confirm(it.statementEntryId,it.transactionId!!)};refreshReconciliation()
     }
