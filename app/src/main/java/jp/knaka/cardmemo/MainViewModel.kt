@@ -58,11 +58,29 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         updateTransactions(_transactions.value.map{if(it.id==transactionId)it.copy(recurringId=recurringId)else it})
     }
 
-    fun deleteTransaction(id: Long) {val target=_transactions.value.firstOrNull{it.id==id}?:return;if(target.yearMonth().toString() in _lockedMonths.value)return;updateTransactions(_transactions.value.filterNot { it.id == id })}
-    fun toggleConfirmed(id: Long) {
-        val db=StorageProvider.database(getApplication());val match=db.reconciliation().loadMatches().firstOrNull{it.transactionId==id}?:return;val statement=db.statements().loadEntry(match.statementEntryId)?:return;val imported=_importedStatements.value.firstOrNull{it.fileHash==statement.fileHash}?:return;if(imported.statementMonth in _lockedMonths.value)return
-        if(match.status==ReconciliationStatus.SUGGESTED.name)reconciliationRepository.confirm(match.statementEntryId,id) else if(match.status==ReconciliationStatus.CONFIRMED.name){val now=System.currentTimeMillis();db.reconciliation().upsertMatch(match.copy(status=ReconciliationStatus.SUGGESTED.name,updatedAt=now,confirmedAt=null))}else return;refreshReconciliation()
-    }
+    fun deleteTransaction(id: Long) {val target=_transactions.value.firstOrNull{it.id==id}?:return;val month=target.yearMonth().toString();if(month in _lockedMonths.value)return;target.recurringId?.let{settingsRepository.suppressRecurringOccurrence(it,month)};updateTransactions(_transactions.value.filterNot { it.id == id })}
+    fun toggleConfirmed(id: Long):String?=runCatching {
+        val db=StorageProvider.database(getApplication())
+        val transaction=_transactions.value.firstOrNull{it.id==id}?:error("RecoFi明細が見つかりません")
+        val existing=db.reconciliation().loadMatches().firstOrNull{it.transactionId==id}
+        if(existing!=null){
+            val statementEntry=db.statements().loadEntry(existing.statementEntryId)?:error("カード明細が見つかりません")
+            val imported=_importedStatements.value.firstOrNull{it.fileHash==statementEntry.fileHash}?:error("取込ファイルが見つかりません")
+            check(imported.statementMonth !in _lockedMonths.value){"この月はロックされています"}
+            if(existing.status==ReconciliationStatus.SUGGESTED.name)reconciliationRepository.confirm(existing.statementEntryId,id)
+            else if(existing.status==ReconciliationStatus.CONFIRMED.name){val now=System.currentTimeMillis();db.reconciliation().upsertMatch(existing.copy(status=ReconciliationStatus.SUGGESTED.name,updatedAt=now,confirmedAt=null))}
+            else error("この明細はチェックで変更できません")
+        }else{
+            val month=transaction.yearMonth();check(month.toString() !in _lockedMonths.value){"この月はロックされています"}
+            val imported=_importedStatements.value.lastOrNull{it.statementMonth==month.toString()&&it.paymentSourceId==transaction.paymentSourceId}?:error("この月のカード明細が取り込まれていません")
+            val usedEntryIds=db.reconciliation().loadMatches().filter{it.transactionId!=null}.mapTo(hashSetOf()){it.statementEntryId}
+            val transactionDate=Instant.ofEpochMilli(transaction.usedAt).atZone(ZoneId.systemDefault()).toLocalDate()
+            val candidates=db.statements().loadEntries().filter{entry->entry.fileHash==imported.fileHash&&entry.id !in usedEntryIds&&entry.amount==transaction.amount}.map{it to kotlin.math.abs(java.time.temporal.ChronoUnit.DAYS.between(transactionDate,LocalDate.parse(it.date)))}.filter{it.second<=7}
+            val exact=candidates.filter{it.second==0L};val selected=when{exact.size==1->exact.single().first;exact.size>1->error("同じ日付・金額のカード明細が複数あります。照合画面で選んでください");candidates.size==1->candidates.single().first;candidates.isEmpty()->error("同じ日付・金額のカード明細が見つかりません");else->error("候補が複数あります。照合画面で選んでください")}
+            reconciliationRepository.confirm(selected.id,id)
+        }
+        refreshReconciliation()
+    }.exceptionOrNull()?.let{it.message?:"消込状態を変更できませんでした"}
     fun confirmTransactions(ids: Set<Long>, statementMonth: YearMonth) {
         if(statementMonth.toString() in _lockedMonths.value)return;val db=StorageProvider.database(getApplication());db.reconciliation().loadMatches().filter{it.transactionId in ids&&it.status==ReconciliationStatus.SUGGESTED.name}.forEach{reconciliationRepository.confirm(it.statementEntryId,it.transactionId!!)};refreshReconciliation()
     }
@@ -72,12 +90,23 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         settingsRepository.saveLockedMonths(_lockedMonths.value)
     }
     fun lockBlockers(month:YearMonth)=reconciliationRepository.canLock(month,_paymentSources.value)
+    fun reconciliationTotal(month:YearMonth,sourceId:String)=reconciliationRepository.reconciliationTotal(month,sourceId)
     fun declareNoActivity(month:YearMonth,sourceId:String){reconciliationRepository.declareNoActivity(month,sourceId);refreshReconciliation()}
     fun reviewRows(fileHash:String)=reconciliationRepository.reviewRows(fileHash)
+    fun refreshReconciliationState()=refreshReconciliation()
     fun runAutoReconciliation(fileHash:String,sourceId:String,month:YearMonth){if(month.toString() in _lockedMonths.value)return;reconciliationRepository.autoMatch(fileHash,sourceId,_transactions.value);refreshReconciliation()}
-    fun confirmMatch(entryId:Long,transactionId:Long){reconciliationRepository.confirm(entryId,transactionId);refreshReconciliation()}
+    fun confirmMatch(entryId:Long,transactionId:Long):String?=runCatching{
+        val db=StorageProvider.database(getApplication());val entry=db.statements().loadEntry(entryId)?:error("カード明細が見つかりません");val transaction=_transactions.value.firstOrNull{it.id==transactionId}?:error("RecoFi明細が見つかりません");val imported=_importedStatements.value.firstOrNull{it.fileHash==entry.fileHash}?:error("取込ファイルが見つかりません")
+        check(imported.statementMonth !in _lockedMonths.value){"2026年${YearMonth.parse(imported.statementMonth).monthValue}月はロックされています"};check(transaction.paymentSourceId==imported.paymentSourceId){"支払方法が異なる明細は選択できません"}
+        reconciliationRepository.confirm(entryId,transactionId)
+        val saved=db.reconciliation().loadMatch(entryId);check(saved?.transactionId==transactionId&&saved.status==ReconciliationStatus.CONFIRMED.name){"消込結果を確認できませんでした"}
+        refreshReconciliation()
+    }.exceptionOrNull()?.let{it.message?:"明細を紐づけできませんでした"}
     fun rejectMatch(entryId:Long,transactionId:Long){reconciliationRepository.reject(entryId,transactionId);refreshReconciliation()}
-    fun createMissingAndConfirm(entryId:Long,amount:Long,category:String,merchant:String,description:String,usedAt:Long,sourceId:String){val month=YearMonth.from(Instant.ofEpochMilli(usedAt).atZone(ZoneId.systemDefault()));if(month.toString() in _lockedMonths.value)return;val tx=Transaction(System.nanoTime(),amount,category,merchant,description,usedAt,paymentSourceId=sourceId,categoryId=settingsRepository.categoryId(category));reconciliationRepository.createAndConfirm(entryId,tx);_transactions.value=transactionRepository.load();refreshReconciliation()}
+    fun createMissingAndConfirm(entryId:Long,amount:Long,category:String,merchant:String,description:String,usedAt:Long,sourceId:String):String?=runCatching{
+        val month=YearMonth.from(Instant.ofEpochMilli(usedAt).atZone(ZoneId.systemDefault()));require(month.toString() !in _lockedMonths.value){"この月はロックされています"}
+        val tx=Transaction(0L,amount,category,merchant,description,usedAt,paymentSourceId=sourceId,categoryId=settingsRepository.categoryId(category));reconciliationRepository.createAndConfirm(entryId,tx);_transactions.value=transactionRepository.load();refreshReconciliation()
+    }.exceptionOrNull()?.let{it.message?:"明細を保存できませんでした"}
     fun isImportedFile(hash: String): Boolean = hash in _importedFileHashes.value
     fun recordImportedFile(hash: String) {
         _importedFileHashes.value = _importedFileHashes.value + hash
@@ -147,13 +176,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         ensureRecurringFor(YearMonth.now())
     }
 
-    fun reorderRecurringExpenses(items: List<RecurringExpense>) {
-        if (items.map { it.id }.toSet() == _recurringExpenses.value.map { it.id }.toSet()) {
-            _recurringExpenses.value = items
-            settingsRepository.saveRecurringExpenseOrder(items)
-        }
-    }
-
     fun endRecurringExpense(id: Long, endDate: LocalDate) {
         _recurringExpenses.value = _recurringExpenses.value.map { if (it.id == id) it.copy(endDate = endDate.toString()) else it }
         settingsRepository.saveRecurringExpenses(_recurringExpenses.value)
@@ -171,6 +193,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val transactionsWithoutPlan = removeGeneratedTransactions(_transactions.value,id)
         _recurringExpenses.value = _recurringExpenses.value.filterNot { it.id == id }
         settingsRepository.saveRecurringExpenses(_recurringExpenses.value)
+        settingsRepository.clearRecurringSuppressions(id)
         updateTransactions(transactionsWithoutPlan)
         refreshReconciliation()
     }
@@ -185,9 +208,22 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         ensureRecurringFor(YearMonth.now())
     }
 
+    fun reorderRecurringExpenses(items: List<RecurringExpense>) {
+        if (items.map { it.id }.toSet() == _recurringExpenses.value.map { it.id }.toSet()) {
+            _recurringExpenses.value = items
+            settingsRepository.saveRecurringExpenseOrder(items)
+        }
+    }
+
     fun ensureRecurringFor(month: YearMonth) {
+        // Opening an old month must be read-only. Otherwise a recurring entry
+        // intentionally removed from a restored/cleaned backup is recreated merely
+        // by viewing that month. Current and future months remain automatic.
+        if (!shouldGenerateRecurringFor(month, YearMonth.now())) return
         if (month.toString() in _lockedMonths.value) return
-        val generated = RecurringTransactionGenerator.generate(_recurringExpenses.value, _transactions.value, month)
+        val suppressed=settingsRepository.loadSuppressedRecurringOccurrences()
+        val activeExpenses=_recurringExpenses.value.filterNot{"${it.id}|$month" in suppressed}
+        val generated = RecurringTransactionGenerator.generate(activeExpenses, _transactions.value, month)
         val updated = _transactions.value + generated
         if (updated != _transactions.value) updateTransactions(updated)
     }
@@ -218,3 +254,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private fun reorderTemplate(flow:MutableStateFlow<List<String>>,items:List<String>,save:(List<String>)->Unit){if(items.toSet()==flow.value.toSet()){flow.value=items;save(items)}}
     private fun renameTemplate(flow:MutableStateFlow<List<String>>,old:String,new:String,rename:(String,String)->Unit):String?=runCatching{rename(old,new);val clean=new.trim();flow.value=flow.value.map{if(it==old)clean else it};null}.getOrElse{it.message?:"変更できませんでした"}
 }
+
+internal fun shouldGenerateRecurringFor(requestedMonth: YearMonth, currentMonth: YearMonth): Boolean =
+    !requestedMonth.isBefore(currentMonth)
+
+
