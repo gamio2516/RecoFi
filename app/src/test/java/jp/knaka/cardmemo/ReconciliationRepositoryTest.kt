@@ -71,6 +71,18 @@ class ReconciliationRepositoryTest {
         assertEquals(MatchSource.USER.name, match.matchSource)
     }
 
+    @Test fun `manual selection safely moves a transaction from a wrong statement row`() {
+        persist(tx())
+        db.statements().upsertEntries(listOf(StatementEntryEntity(102, "hash", 1, "2026-08-10", 1200, "WRONG", "raw")))
+        repository.confirm(102, 1)
+
+        repository.confirm(101, 1)
+
+        assertNull(db.reconciliation().loadMatch(102)?.transactionId)
+        assertEquals(ReconciliationStatus.PENDING.name, db.reconciliation().loadMatch(102)?.status)
+        assertEquals(1L, db.reconciliation().loadMatch(101)?.transactionId)
+    }
+
     @Test fun `rejected pair is not suggested again`() {
         persist(tx())
         repository.autoMatch("hash", "card", listOf(tx()))
