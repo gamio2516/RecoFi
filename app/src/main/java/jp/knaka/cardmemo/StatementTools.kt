@@ -450,12 +450,21 @@ object StatementTools {
     }
 
     internal fun combineMoneyPieces(pieces: List<Pair<String, Int>>, zoneLeft: Int, zoneRight: Int): Long? {
-        val inside = pieces.asSequence()
-            .filter { (_, x) -> x >= zoneLeft && x < zoneRight }
+        val numeric = pieces.asSequence()
             .mapNotNull { (text, x) -> text.filter(Char::isDigit).takeIf(String::isNotBlank)?.let { x to it } }
             .sortedBy { it.first }
             .toList()
+        val inside = numeric.filter { (x, _) -> x >= zoneLeft && x < zoneRight }.toMutableList()
         if (inside.isEmpty()) return null
+        // A comma-grouped value can straddle the OCR-derived column boundary.
+        // For example, "3,140" may be detected as "3" inside the billing
+        // column and "140" only a few pixels to its right.
+        val columnWidth = (zoneRight - zoneLeft).coerceAtLeast(48)
+        val edgeTolerance = (columnWidth / 2).coerceIn(24, 160)
+        val trailingGroup = numeric.firstOrNull { (x, digits) ->
+            x >= zoneRight && digits.length == 3 && x - inside.last().first <= edgeTolerance
+        }
+        if (trailingGroup != null && inside.last().second.length <= 3) inside += trailingGroup
         // OCR frequently separates a printed comma-grouped amount: "5,841"
         // becomes ["5", "841"]. Rejoin consecutive groups before parsing.
         val joined = buildString {
@@ -543,4 +552,5 @@ object StatementTools {
         addOnFailureListener { if (continuation.isActive) continuation.resumeWithException(it) }
     }
 }
+
 
