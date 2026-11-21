@@ -1,6 +1,3 @@
-Warning: truncated output (original token count: 30172)
-Total output lines: 905
-
 package jp.knaka.cardmemo
 
 import android.os.Bundle
@@ -192,6 +189,11 @@ internal fun CardMemoApp(vm: MainViewModel = viewModel()) {
 
 @Composable private fun DetailsScreen(all: List<Transaction>, sources: List<PaymentSource>, sourceId: String, selectSource: (String) -> Unit, ensure: (YearMonth) -> Unit, toggle: (Long) -> Unit, edit: (Transaction) -> Unit, lockedMonths: Set<String>, reconciliationProgress: Map<String, ReconciliationProgress>, confirmedIds:Set<Long>,suggestedIds:Set<Long>, initialMonth:YearMonth, openTransfer: (YearMonth, String) -> Unit, setLocked: (YearMonth, Boolean) -> Unit, lockBlockers: (YearMonth) -> List<LockBlocker>, addExpense: () -> Unit) {
     var month by remember(initialMonth) { mutableStateOf(initialMonth) }
+    var showSearch by remember { mutableStateOf(false) }
+    if (showSearch) {
+        RecoFiTransactionSearchScreen(all, sources, month, lockedMonths, { showSearch = false }, edit)
+        return
+    }
     var onlyOpen by remember { mutableStateOf(false) }
     LaunchedEffect(month) { ensure(month) }
     val monthRows = all.forMonth(month).filter { it.paymentSourceId == sourceId }
@@ -216,6 +218,7 @@ internal fun CardMemoApp(vm: MainViewModel = viewModel()) {
     Column(Modifier.fillMaxSize().padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
         PaymentSourcePicker(sources, sourceId, selectSource)
         MonthHeader(month, { month = month.minusMonths(1) }, { month = month.plusMonths(1) })
+        OutlinedButton(onClick = { showSearch = true }, modifier = Modifier.fillMaxWidth()) { Text("RecoFi明細を検索") }
         if (showMonthlySummary) Card(colors = CardDefaults.cardColors(containerColor = WinterBlue), shape = RoundedCornerShape(22.dp), modifier = Modifier.fillMaxWidth()) { Row(Modifier.fillMaxWidth().padding(18.dp), verticalAlignment = Alignment.CenterVertically) { Column(Modifier.weight(1f)) { Text("この月の利用額", color = Color.White.copy(.78f)); Text(yen(monthRows.sumOf { it.amount }), color = Color.White, fontSize = 32.sp, fontWeight = FontWeight.Bold); Text("${monthRows.size}件 ・ 要確認 ${monthRows.count { it.id !in confirmedIds }}件", color = Color.White.copy(.82f)) }; OutlinedButton(onClick = { openTransfer(month, sourceId) }, border = BorderStroke(1.dp, Color.White.copy(.38f)), colors = ButtonDefaults.outlinedButtonColors(containerColor = Color.White.copy(.10f), contentColor = Color.White), contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp)) { Text("カード明細を取込・照合  ›", fontSize = 11.sp, fontWeight = FontWeight.Bold) } } }
         val progress=reconciliationProgress["$month|$sourceId"]
         if(progress!=null&&progress.matched>progress.confirmed)EmptyStateCard("確認待ちの候補があります","候補を確認すると、この月を確定できます","候補を確認"){openTransfer(month,sourceId)}
@@ -235,6 +238,53 @@ internal fun CardMemoApp(vm: MainViewModel = viewModel()) {
     if (lockedWarning) CuteWarningDialog("この月はロック中だよ 🔒", "確定した明細を守るため、手動での消込変更もお休み中です。変更したいときは『確定済み』を押して解除してください。") { lockedWarning = false }
     if (lockFailed) CuteWarningDialog("まだ確定できません", blockerMessage.ifBlank { "未確認の明細が残っています。" }) { lockFailed = false }
     if(confirmUnlock) AlertDialog(onDismissRequest={confirmUnlock=false},title={Text("月次ロックを解除しますか？")},text={Text("解除すると、この月の明細や消込状態を再び変更できるようになります。")},confirmButton={Button(onClick={setLocked(month,false);confirmUnlock=false}){Text("解除する")}},dismissButton={TextButton(onClick={confirmUnlock=false}){Text("キャンセル")}})
+}
+
+@Composable private fun RecoFiTransactionSearchScreen(
+    all: List<Transaction>,
+    sources: List<PaymentSource>,
+    initialMonth: YearMonth,
+    lockedMonths: Set<String>,
+    back: () -> Unit,
+    edit: (Transaction) -> Unit,
+) {
+    var month by remember(initialMonth) { mutableStateOf(initialMonth) }
+    var query by remember { mutableStateOf("") }
+    var lockedWarning by remember { mutableStateOf(false) }
+    val sourceNames = sources.associate { it.id to it.name }
+    val rows = searchReconciliationTransactions(all, month, query, sourceNames)
+    Column(Modifier.fillMaxSize().padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        TextButton(onClick = back, contentPadding = PaddingValues(0.dp)) { Text("‹ 明細に戻る") }
+        Text("RecoFi明細を検索", fontSize = 22.sp, fontWeight = FontWeight.Bold, color = DeepNavy)
+        MonthHeader(month, { month = month.minusMonths(1) }, { month = month.plusMonths(1) })
+        OutlinedTextField(
+            value = query,
+            onValueChange = { query = it },
+            modifier = Modifier.fillMaxWidth(),
+            label = { Text("取引先・内容・金額など") },
+            singleLine = true,
+        )
+        Text("${rows.size}件　${yen(rows.sumOf { it.amount })}", color = DeepNavy, fontWeight = FontWeight.Bold)
+        if (rows.isEmpty()) EmptyStateCard("該当する明細がありません", "月または検索語を変えてください")
+        else LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            items(rows, key = { it.id }) { item ->
+                Card(
+                    modifier = Modifier.fillMaxWidth().clickable { if (month.toString() in lockedMonths) lockedWarning = true else edit(item) },
+                    colors = CardDefaults.cardColors(containerColor = Color.White),
+                ) {
+                    Row(Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Column(Modifier.weight(1f)) {
+                            Text(transactionPrimaryText(item), fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            val date = Instant.ofEpochMilli(item.usedAt).atZone(ZoneId.systemDefault()).toLocalDate()
+                            Text("$date　${sourceNames[item.paymentSourceId].orEmpty()}　${transactionSecondaryText(item)}", fontSize = 12.sp, color = Color.Gray, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        }
+                        Text(yen(item.amount), fontWeight = FontWeight.Bold)
+                    }
+                }
+            }
+        }
+    }
+    if (lockedWarning) CuteWarningDialog("この月はロック中だよ 🔒", "明細を修正したいときは、先に月次ロックを解除してください。") { lockedWarning = false }
 }
 
 @Composable private fun AnalysisScreen(all: List<Transaction>, budgets: Map<String, Long>, defaultBudget: Long, categories:List<String>, merchants:List<String>, descriptions:List<String>, sources:List<PaymentSource>, recurringExpenses:List<RecurringExpense>, defaultSourceId:String, ensure: (YearMonth) -> Unit, saveTransaction:(Long,String,String,String,Long,String,Long?)->Unit, deleteTransaction:(Long)->Unit, linkRecurring:(Long,Long?)->Unit, recordExpense:()->Unit, setBudget:()->Unit) {
@@ -554,7 +604,12 @@ internal fun CardMemoApp(vm: MainViewModel = viewModel()) {
         if (mode == SettingsPage.RECONCILE && fixedMonth != null) Card(colors = CardDefaults.cardColors(containerColor = Color(0xFFEAF0FF))) { Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
             Text("カード明細を追加", fontWeight = FontWeight.Bold, color = DeepNavy)
             Button(enabled = !loading && linkedForTarget == null, onClick = { statementLauncher.launch(arrayOf("application/pdf", "text/csv", "text/comma-separated-values", "text/*")) }, modifier = Modifier.fillMaxWidth()) { Text(if (loading) "読込中…" else if (linkedForTarget != null) "この月には取込済み" else "カード明細のPDF／CSVを選択") }
-      …172 tokens truncated…r.weight(1f)) { Text(imported.fileName, fontWeight = FontWeight.SemiBold, color = DeepNavy); Text("${imported.entries.size}件・この月に紐づけ済み", color = Color.Gray, fontSize = 12.sp) }; TextButton(onClick = { deleteImported(imported.fileHash) }) { Text("削除", color = Color(0xFFC43E55)) } };val statementTotal=imported.declaredTotal?:imported.entries.sumOf{it.amount};val recofiTotal=vm?.reconciliationTotal(month,sourceId)?:transactions.filter{it.paymentSourceId==sourceId&&YearMonth.from(Instant.ofEpochMilli(it.usedAt).atZone(ZoneId.systemDefault()))==month}.sumOf{it.amount};Card(colors=CardDefaults.cardColors(containerColor=Color.White),modifier=Modifier.fillMaxWidth()){Column(Modifier.padding(12.dp),verticalArrangement=Arrangement.spacedBy(5.dp)){Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.SpaceBetween){Text("明細中の利用金額合計",color=Color.Gray);Text(yen(statementTotal),fontWeight=FontWeight.Bold)};Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.SpaceBetween){Text("RecoFi登録明細の合計",color=Color.Gray);Text(yen(recofiTotal),fontWeight=FontWeight.Bold)};HorizontalDivider();Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.SpaceBetween){Text("差額（カード − RecoFi）",fontWeight=FontWeight.SemiBold);Text(signedYen(statementTotal-recofiTotal),fontWeight=FontWeight.Bold,color=if(statementTotal==recofiTotal)Color(0xFF187A55)else Color(0xFFE14964))}}} }
+            Text("対応：楽天カード・JALカードSuica・ビューカード", color = Color(0xFF53658F), fontSize = 12.sp)
+        } }
+        if (mode == SettingsPage.RECONCILE) Card(colors = CardDefaults.cardColors(containerColor = Color(0xFFEAF0FF))) { Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Text("照合", fontWeight = FontWeight.Bold, color = DeepNavy)
+            val imported = importedStatements.lastOrNull { it.statementMonth == month.toString() && it.paymentSourceId == sourceId }
+            if (imported != null) { Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) { Column(Modifier.weight(1f)) { Text(imported.fileName, fontWeight = FontWeight.SemiBold, color = DeepNavy); Text("${imported.entries.size}件・この月に紐づけ済み", color = Color.Gray, fontSize = 12.sp) }; TextButton(onClick = { deleteImported(imported.fileHash) }) { Text("削除", color = Color(0xFFC43E55)) } };val statementTotal=imported.declaredTotal?:imported.entries.sumOf{it.amount};val recofiTotal=vm?.reconciliationTotal(month,sourceId)?:transactions.filter{it.paymentSourceId==sourceId&&YearMonth.from(Instant.ofEpochMilli(it.usedAt).atZone(ZoneId.systemDefault()))==month}.sumOf{it.amount};Card(colors=CardDefaults.cardColors(containerColor=Color.White),modifier=Modifier.fillMaxWidth()){Column(Modifier.padding(12.dp),verticalArrangement=Arrangement.spacedBy(5.dp)){Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.SpaceBetween){Text("明細中の利用金額合計",color=Color.Gray);Text(yen(statementTotal),fontWeight=FontWeight.Bold)};Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.SpaceBetween){Text("RecoFi登録明細の合計",color=Color.Gray);Text(yen(recofiTotal),fontWeight=FontWeight.Bold)};HorizontalDivider();Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.SpaceBetween){Text("差額（カード − RecoFi）",fontWeight=FontWeight.SemiBold);Text(signedYen(statementTotal-recofiTotal),fontWeight=FontWeight.Bold,color=if(statementTotal==recofiTotal)Color(0xFF187A55)else Color(0xFFE14964))}}} }
             else { Text("この月に紐づいたファイルはありません", color = Color.Gray, fontSize = 13.sp); importedStatements.filter { it.paymentSourceId.isBlank() }.sortedByDescending { it.statementMonth == month.toString() }.take(5).forEach { stored -> OutlinedButton(onClick = { if (linkImported(stored.fileHash, month, sourceId)) status = "${stored.fileName} をこの月・カードへ紐づけました" else status = "この月にはすでに別のファイルが紐づいています" }, modifier = Modifier.fillMaxWidth()) { Column(Modifier.fillMaxWidth()) { Text(stored.fileName, maxLines = 1, overflow = TextOverflow.Ellipsis); Text("推定 ${stored.statementMonth}・${stored.entries.size}件", fontSize = 10.sp, color = Color.Gray) } } }; if(sources.firstOrNull{it.id==sourceId}?.type==PaymentSourceType.CREDIT_CARD) TextButton(onClick={vm?.declareNoActivity(month,sourceId);status="この月は利用なしとして記録しました"},enabled=!isLocked,modifier=Modifier.fillMaxWidth()){Text("この月は利用なし")} }
             if (imported?.declaredTotal != null) {
                 val importedRowsTotal = imported.entries.sumOf { it.amount }
@@ -592,7 +647,7 @@ internal fun CardMemoApp(vm: MainViewModel = viewModel()) {
             else Text("未消込・要確認のみ",fontWeight=FontWeight.Bold,color=DeepNavy)
             TextButton(onClick={showConfirmedRows=!showConfirmedRows},modifier=Modifier.fillMaxWidth()){Text(if(showConfirmedRows)"消込済みを隠す" else "消込済み${confirmed}件を表示")}
             val visibleRows=if(showConfirmedRows)persistedRows else remainingRows
-            visibleRows.forEach{row->val tx=row.transaction;val isConfirmed=row.match?.status==ReconciliationStatus.CONFIRMED.name;Card(colors=CardDefaults.cardColors(containerColor=if(isConfirmed)Color(0xFFE9F7F1) else Color.White),modifier=Modifier.fillMaxWidth()){Column(Modifier.padding(12.dp),verticalArrangement=Arrangement.spacedBy(6.dp)){Text("カード明細　${row.entry.date}　${row.entry.merchant}　${yen(row.entry.amount)}",fontWeight=FontWeight.Bold);if(tx!=null){Text("RecoFi明細　${Instant.ofEpochMilli(tx.usedAt).atZone(ZoneId.systemDefault()).toLocalDate()}　${tx.merchant}／${tx.description}　${row.categoryName.orEmpty()}　${yen(tx.amount)}");Text(if(isConfirmed)"✓ 消込済み" else "要確認",color=if(isConfirmed)Color(0xFF187A55) else Color(0xFFE14964),fontWeight=FontWeight.Bold,fontSize=12.sp);if(!isLocked)TextButton(onClick={editReconciledTransaction=Transaction(tx.id,tx.amount,row.categoryName.orEmpty(),tx.merchant,tx.description,tx.usedAt,tx.recurringId,tx.paymentSourceId,tx.categoryId)},modifier=Modifier.fillMaxWidth()){Text("RecoFi明細を修正")}}else Text("対応するRecoFi明細がありません",color=Color(0xFFE14964));if(!isLocked&&!isConfirmed){Column{TextButton(onClick={alternativeEntry=row.entry},modifier=Modifier.fillMaxWidth()){Text("RecoFi明細を検索して対応")};TextButton(onClick={missingEntry=row.entry},modifier=Modifier.fillMaxWidth()){Text("RecoFiに記録がない")}}}}}
+            visibleRows.forEach{row->val tx=row.transaction;val isConfirmed=row.match?.status==ReconciliationStatus.CONFIRMED.name;Card(colors=CardDefaults.cardColors(containerColor=if(isConfirmed)Color(0xFFE9F7F1) else Color.White),modifier=Modifier.fillMaxWidth()){Column(Modifier.padding(12.dp),verticalArrangement=Arrangement.spacedBy(6.dp)){Text("カード明細　${row.entry.date}　${row.entry.merchant}　${yen(row.entry.amount)}",fontWeight=FontWeight.Bold);if(tx!=null){Text("RecoFi明細　${Instant.ofEpochMilli(tx.usedAt).atZone(ZoneId.systemDefault()).toLocalDate()}　${tx.merchant}／${tx.description}　${row.categoryName.orEmpty()}　${yen(tx.amount)}");Text(if(isConfirmed)"✓ 消込済み" else "要確認",color=if(isConfirmed)Color(0xFF187A55) else Color(0xFFE14964),fontWeight=FontWeight.Bold,fontSize=12.sp);if(!isLocked)TextButton(onClick={editReconciledTransaction=Transaction(tx.id,tx.amount,row.categoryName.orEmpty(),tx.merchant,tx.description,tx.usedAt,tx.recurringId,tx.paymentSourceId,tx.categoryId)},modifier=Modifier.fillMaxWidth()){Text("RecoFi明細を修正")}}else Text("対応するRecoFi明細がありません",color=Color(0xFFE14964));if(!isLocked&&!isConfirmed){Column{TextButton(onClick={if(tx!=null)vm?.rejectMatch(row.entry.id,tx.id);alternativeEntry=row.entry},modifier=Modifier.fillMaxWidth()){Text("対応する明細を選ぶ")};TextButton(onClick={if(tx!=null)vm?.rejectMatch(row.entry.id,tx.id);missingEntry=row.entry},modifier=Modifier.fillMaxWidth()){Text("RecoFiに記録がない")}}}}}
             }
         }
         if (matches.isNotEmpty() && vm==null) {
@@ -608,82 +663,11 @@ internal fun CardMemoApp(vm: MainViewModel = viewModel()) {
     editReconciledTransaction?.let { edit -> EntryDialog(vm?.categories?.value.orEmpty(),vm?.merchantTemplates?.value.orEmpty(),vm?.descriptionTemplates?.value.orEmpty(),sources,edit.paymentSourceId,edit,{}, {},recurringExpenses=vm?.recurringExpenses?.value.orEmpty(),linkRecurring={id,recurringId->vm?.linkTransactionToRecurring(id,recurringId)},allowDelete=false,onDismiss={editReconciledTransaction=null},onDelete={}){amount,category,merchant,description,date,paymentSourceId->vm?.addTransaction(amount,category,merchant,description,date.atStartOfDay(ZoneId.systemDefault()).toInstant().toEpochMilli(),paymentSourceId,edit.id);editReconciledTransaction=null;reviewVersion++;status="RecoFi明細を修正しました"} }
     duplicateName?.let { name -> AlertDialog(onDismissRequest = { duplicateName = null }, title = { Text("同じファイルは取込済みです") }, text = { Text("「$name」は以前に読み込まれています。重複した消込を防ぐため、今回は処理しませんでした。") }, confirmButton = { Button(onClick = { duplicateName = null }) { Text("確認") } }) }
     alternativeEntry?.let { entry ->
-        ReconciliationTransactionSearchDialog(
-            entry = entry,
-            initialMonth = month,
-            transactions = transactions,
-            sources = sources,
-            dismiss = { alternativeEntry = null },
-        ) { transactionId ->
-            val error = vm?.confirmMatch(entry.id, transactionId)
-            if (error == null) {
-                alternativeEntry = null
-                reviewVersion++
-                status = "${entry.date} ${yen(entry.amount)}をRecoFi明細と対応させました"
-            }
-            error
-        }
+        val entryDate = LocalDate.parse(entry.date)
+        val choices = transactions.filter { it.paymentSourceId == sourceId && it.amount == entry.amount && kotlin.math.abs(java.time.temporal.ChronoUnit.DAYS.between(Instant.ofEpochMilli(it.usedAt).atZone(ZoneId.systemDefault()).toLocalDate(), entryDate)) <= 7 }
+        AlertDialog(onDismissRequest = { alternativeEntry = null }, title = { Text("別の明細を選ぶ") }, text = { Column(Modifier.heightIn(max = 360.dp).verticalScroll(rememberScrollState())) { if (choices.isEmpty()) Text("条件に合うRecoFi明細がありません。") else choices.forEach { tx -> TextButton(onClick = { val error=vm?.confirmMatch(entry.id, tx.id);if(error==null){alternativeEntry = null; reviewVersion++}else status="紐づけできませんでした：$error" }, modifier = Modifier.fillMaxWidth()) { Text("${Instant.ofEpochMilli(tx.usedAt).atZone(ZoneId.systemDefault()).toLocalDate()}　${tx.merchant}　${yen(tx.amount)}") } } } }, confirmButton = { TextButton(onClick = { alternativeEntry = null }) { Text("閉じる") } })
     }
     missingEntry?.let { entry -> MissingTransactionDialog(entry, vm?.categories?.value.orEmpty(), { missingEntry = null }) { category, description -> val usedAt=LocalDate.parse(entry.date).atStartOfDay(ZoneId.systemDefault()).toInstant().toEpochMilli();val error=vm?.createMissingAndConfirm(entry.id,entry.amount,category,entry.merchant,description,usedAt,sourceId);if(error==null){missingEntry=null;reviewVersion++;status="${entry.date} ${yen(entry.amount)}を登録して消込しました"}else status="登録できませんでした：$error" } }
-}
-
-@Composable private fun ReconciliationTransactionSearchDialog(
-    entry: jp.knaka.cardmemo.storage.StatementEntryEntity,
-    initialMonth: YearMonth,
-    transactions: List<Transaction>,
-    sources: List<PaymentSource>,
-    dismiss: () -> Unit,
-    select: (Long) -> String?,
-) {
-    var searchMonth by remember(entry.id) { mutableStateOf(initialMonth) }
-    var query by remember(entry.id) { mutableStateOf("") }
-    var error by remember(entry.id) { mutableStateOf<String?>(null) }
-    val sourceNames = sources.associate { it.id to it.name }
-    val choices = searchReconciliationTransactions(transactions, searchMonth, query, sourceNames)
-    AlertDialog(
-        onDismissRequest = dismiss,
-        title = { Text("RecoFi明細を検索") },
-        text = {
-            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                Text("カード：${entry.date}　${entry.merchant}　${yen(entry.amount)}", color = DeepNavy, fontSize = 12.sp)
-                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
-                    OutlinedButton(onClick = { searchMonth = searchMonth.minusMonths(1); error = null }) { Text("‹") }
-                    Text("${searchMonth.year}年${searchMonth.monthValue}月", fontWeight = FontWeight.Bold)
-                    OutlinedButton(onClick = { searchMonth = searchMonth.plusMonths(1); error = null }) { Text("›") }
-                }
-                OutlinedTextField(
-                    value = query,
-                    onValueChange = { query = it; error = null },
-                    modifier = Modifier.fillMaxWidth(),
-                    label = { Text("取引先・内容・金額など") },
-                    singleLine = true,
-                )
-                Text("${choices.size}件", color = Color.Gray, fontSize = 12.sp)
-                Column(Modifier.heightIn(max = 330.dp).verticalScroll(rememberScrollState())) {
-                    if (choices.isEmpty()) Text("該当するRecoFi明細がありません。月または検索語を変えてください。", color = Color.Gray)
-                    choices.forEach { tx ->
-                        val date = Instant.ofEpochMilli(tx.usedAt).atZone(ZoneId.systemDefault()).toLocalDate()
-                        TextButton(
-                            onClick = { error = select(tx.id) },
-                            modifier = Modifier.fillMaxWidth(),
-                            contentPadding = PaddingValues(vertical = 8.dp),
-                        ) {
-                            Column(Modifier.fillMaxWidth()) {
-                                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                                    Text("$date　${tx.merchant.ifBlank { tx.description.ifBlank { tx.category } }}", Modifier.weight(1f), maxLines = 1, overflow = TextOverflow.Ellipsis)
-                                    Text(yen(tx.amount), fontWeight = FontWeight.Bold)
-                                }
-                                Text("${sourceNames[tx.paymentSourceId].orEmpty()}　${tx.description.ifBlank { tx.category }}", color = Color.Gray, fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                            }
-                        }
-                        HorizontalDivider()
-                    }
-                }
-                error?.let { Text("紐づけできませんでした：$it", color = Color(0xFFE14964), fontSize = 12.sp) }
-            }
-        },
-        confirmButton = { TextButton(onClick = dismiss) { Text("閉じる") } },
-    )
 }
 
 @Composable private fun MissingTransactionDialog(entry: jp.knaka.cardmemo.storage.StatementEntryEntity, categories: List<String>, dismiss: () -> Unit, save: (String, String) -> Unit) {
