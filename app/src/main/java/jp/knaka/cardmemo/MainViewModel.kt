@@ -94,7 +94,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun declareNoActivity(month:YearMonth,sourceId:String){reconciliationRepository.declareNoActivity(month,sourceId);refreshReconciliation()}
     fun reviewRows(fileHash:String)=reconciliationRepository.reviewRows(fileHash)
     fun runAutoReconciliation(fileHash:String,sourceId:String,month:YearMonth){if(month.toString() in _lockedMonths.value)return;reconciliationRepository.autoMatch(fileHash,sourceId,_transactions.value);refreshReconciliation()}
-    fun confirmMatch(entryId:Long,transactionId:Long):String?=runCatching{reconciliationRepository.confirm(entryId,transactionId);refreshReconciliation()}.exceptionOrNull()?.let{it.message?:"明細を紐づけできませんでした"}
+    fun confirmMatch(entryId:Long,transactionId:Long):String?=runCatching{
+        val db=StorageProvider.database(getApplication());val entry=db.statements().loadEntry(entryId)?:error("カード明細が見つかりません");val transaction=_transactions.value.firstOrNull{it.id==transactionId}?:error("RecoFi明細が見つかりません");val imported=_importedStatements.value.firstOrNull{it.fileHash==entry.fileHash}?:error("取込ファイルが見つかりません")
+        check(imported.statementMonth !in _lockedMonths.value){"2026年${YearMonth.parse(imported.statementMonth).monthValue}月はロックされています"};check(transaction.paymentSourceId==imported.paymentSourceId){"支払方法が異なる明細は選択できません"}
+        reconciliationRepository.confirm(entryId,transactionId)
+        val saved=db.reconciliation().loadMatch(entryId);check(saved?.transactionId==transactionId&&saved.status==ReconciliationStatus.CONFIRMED.name){"消込結果を確認できませんでした"}
+        refreshReconciliation()
+    }.exceptionOrNull()?.let{it.message?:"明細を紐づけできませんでした"}
     fun rejectMatch(entryId:Long,transactionId:Long){reconciliationRepository.reject(entryId,transactionId);refreshReconciliation()}
     fun createMissingAndConfirm(entryId:Long,amount:Long,category:String,merchant:String,description:String,usedAt:Long,sourceId:String):String?=runCatching{
         val month=YearMonth.from(Instant.ofEpochMilli(usedAt).atZone(ZoneId.systemDefault()));require(month.toString() !in _lockedMonths.value){"この月はロックされています"}
