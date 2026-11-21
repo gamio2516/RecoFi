@@ -83,6 +83,16 @@ class ReconciliationRepositoryTest {
         assertEquals(1L, db.reconciliation().loadMatch(101)?.transactionId)
     }
 
+    @Test fun `manual selection replaces an existing candidate and is verified as confirmed`() {
+        persist(tx(1),tx(2))
+        db.reconciliation().upsertMatch(ReconciliationMatchEntity(101,2,ReconciliationStatus.SUGGESTED.name,MatchSource.RULE.name,MatchConfidence.HIGH.name,100,"candidate",0,1,1,null))
+        repository.confirm(101,1)
+        val saved=db.reconciliation().loadMatch(101)!!
+        assertEquals(1L,saved.transactionId)
+        assertEquals(ReconciliationStatus.CONFIRMED.name,saved.status)
+        assertEquals(MatchSource.USER.name,saved.matchSource)
+    }
+
     @Test fun `rejected pair is not suggested again`() {
         persist(tx())
         repository.autoMatch("hash", "card", listOf(tx()))
