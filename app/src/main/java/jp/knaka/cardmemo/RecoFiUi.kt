@@ -832,4 +832,3 @@ private fun intervalLabel(months: Int): String = if (months >= 12 && months % 12
 
 private fun normalizeForLearning(value: String): String = MerchantSpendingAnalysis.normalize(value)
 
-
