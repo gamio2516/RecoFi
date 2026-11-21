@@ -58,7 +58,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         updateTransactions(_transactions.value.map{if(it.id==transactionId)it.copy(recurringId=recurringId)else it})
     }
 
-    fun deleteTransaction(id: Long) {val target=_transactions.value.firstOrNull{it.id==id}?:return;if(target.yearMonth().toString() in _lockedMonths.value)return;updateTransactions(_transactions.value.filterNot { it.id == id })}
+    fun deleteTransaction(id: Long) {val target=_transactions.value.firstOrNull{it.id==id}?:return;val month=target.yearMonth().toString();if(month in _lockedMonths.value)return;target.recurringId?.let{settingsRepository.suppressRecurringOccurrence(it,month)};updateTransactions(_transactions.value.filterNot { it.id == id })}
     fun toggleConfirmed(id: Long) {
         val db=StorageProvider.database(getApplication());val match=db.reconciliation().loadMatches().firstOrNull{it.transactionId==id}?:return;val statement=db.statements().loadEntry(match.statementEntryId)?:return;val imported=_importedStatements.value.firstOrNull{it.fileHash==statement.fileHash}?:return;if(imported.statementMonth in _lockedMonths.value)return
         if(match.status==ReconciliationStatus.SUGGESTED.name)reconciliationRepository.confirm(match.statementEntryId,id) else if(match.status==ReconciliationStatus.CONFIRMED.name){val now=System.currentTimeMillis();db.reconciliation().upsertMatch(match.copy(status=ReconciliationStatus.SUGGESTED.name,updatedAt=now,confirmedAt=null))}else return;refreshReconciliation()
@@ -77,7 +77,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun runAutoReconciliation(fileHash:String,sourceId:String,month:YearMonth){if(month.toString() in _lockedMonths.value)return;reconciliationRepository.autoMatch(fileHash,sourceId,_transactions.value);refreshReconciliation()}
     fun confirmMatch(entryId:Long,transactionId:Long){reconciliationRepository.confirm(entryId,transactionId);refreshReconciliation()}
     fun rejectMatch(entryId:Long,transactionId:Long){reconciliationRepository.reject(entryId,transactionId);refreshReconciliation()}
-    fun createMissingAndConfirm(entryId:Long,amount:Long,category:String,merchant:String,description:String,usedAt:Long,sourceId:String){val month=YearMonth.from(Instant.ofEpochMilli(usedAt).atZone(ZoneId.systemDefault()));if(month.toString() in _lockedMonths.value)return;val tx=Transaction(System.nanoTime(),amount,category,merchant,description,usedAt,paymentSourceId=sourceId,categoryId=settingsRepository.categoryId(category));reconciliationRepository.createAndConfirm(entryId,tx);_transactions.value=transactionRepository.load();refreshReconciliation()}
+    fun createMissingAndConfirm(entryId:Long,amount:Long,category:String,merchant:String,description:String,usedAt:Long,sourceId:String):String?=runCatching{
+        val month=YearMonth.from(Instant.ofEpochMilli(usedAt).atZone(ZoneId.systemDefault()));require(month.toString() !in _lockedMonths.value){"この月はロックされています"}
+        val tx=Transaction(0L,amount,category,merchant,description,usedAt,paymentSourceId=sourceId,categoryId=settingsRepository.categoryId(category));reconciliationRepository.createAndConfirm(entryId,tx);_transactions.value=transactionRepository.load();refreshReconciliation()
+    }.exceptionOrNull()?.let{it.message?:"明細を保存できませんでした"}
     fun isImportedFile(hash: String): Boolean = hash in _importedFileHashes.value
     fun recordImportedFile(hash: String) {
         _importedFileHashes.value = _importedFileHashes.value + hash
@@ -164,6 +167,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val transactionsWithoutPlan = removeGeneratedTransactions(_transactions.value,id)
         _recurringExpenses.value = _recurringExpenses.value.filterNot { it.id == id }
         settingsRepository.saveRecurringExpenses(_recurringExpenses.value)
+        settingsRepository.clearRecurringSuppressions(id)
         updateTransactions(transactionsWithoutPlan)
         refreshReconciliation()
     }
@@ -178,9 +182,22 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         ensureRecurringFor(YearMonth.now())
     }
 
+    fun reorderRecurringExpenses(items: List<RecurringExpense>) {
+        if (items.map { it.id }.toSet() == _recurringExpenses.value.map { it.id }.toSet()) {
+            _recurringExpenses.value = items
+            settingsRepository.saveRecurringExpenseOrder(items)
+        }
+    }
+
     fun ensureRecurringFor(month: YearMonth) {
+        // Opening an old month must be read-only. Otherwise a recurring entry
+        // intentionally removed from a restored/cleaned backup is recreated merely
+        // by viewing that month. Current and future months remain automatic.
+        if (!shouldGenerateRecurringFor(month, YearMonth.now())) return
         if (month.toString() in _lockedMonths.value) return
-        val generated = RecurringTransactionGenerator.generate(_recurringExpenses.value, _transactions.value, month)
+        val suppressed=settingsRepository.loadSuppressedRecurringOccurrences()
+        val activeExpenses=_recurringExpenses.value.filterNot{"${it.id}|$month" in suppressed}
+        val generated = RecurringTransactionGenerator.generate(activeExpenses, _transactions.value, month)
         val updated = _transactions.value + generated
         if (updated != _transactions.value) updateTransactions(updated)
     }
@@ -211,3 +228,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private fun reorderTemplate(flow:MutableStateFlow<List<String>>,items:List<String>,save:(List<String>)->Unit){if(items.toSet()==flow.value.toSet()){flow.value=items;save(items)}}
     private fun renameTemplate(flow:MutableStateFlow<List<String>>,old:String,new:String,rename:(String,String)->Unit):String?=runCatching{rename(old,new);val clean=new.trim();flow.value=flow.value.map{if(it==old)clean else it};null}.getOrElse{it.message?:"変更できませんでした"}
 }
+
+internal fun shouldGenerateRecurringFor(requestedMonth: YearMonth, currentMonth: YearMonth): Boolean =
+    !requestedMonth.isBefore(currentMonth)
+
