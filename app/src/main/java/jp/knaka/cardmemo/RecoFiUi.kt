@@ -189,7 +189,7 @@ internal fun CardMemoApp(vm: MainViewModel = viewModel()) {
     Box { OutlinedButton(onClick = { expanded = true }, modifier = Modifier.fillMaxWidth(), colors = ButtonDefaults.outlinedButtonColors(containerColor = accent.copy(alpha=.12f), contentColor = accent), border = BorderStroke(1.dp, accent)) { Text(selected?.name ?: "支払方法", fontWeight = FontWeight.SemiBold) }; DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }, containerColor = Color(0xFFF4F7F6)) { sources.forEach { source -> DropdownMenuItem(text = { Row(verticalAlignment=Alignment.CenterVertically){Box(Modifier.size(12.dp).background(paymentSourceColor(source.colorKey),RoundedCornerShape(50)));Spacer(Modifier.width(8.dp));Text(source.name)} }, onClick = { onSelect(source.id); expanded = false }) } } }
 }
 
-@Composable private fun DetailsScreen(all: List<Transaction>, sources: List<PaymentSource>, sourceId: String, selectSource: (String) -> Unit, ensure: (YearMonth) -> Unit, toggle: (Long) -> Unit, edit: (Transaction) -> Unit, lockedMonths: Set<String>, reconciliationProgress: Map<String, ReconciliationProgress>, confirmedIds:Set<Long>,suggestedIds:Set<Long>, initialMonth:YearMonth, showSearch:Boolean, closeSearch:()->Unit, openTransfer: (YearMonth, String) -> Unit, setLocked: (YearMonth, Boolean) -> Unit, lockBlockers: (YearMonth) -> List<LockBlocker>, addExpense: () -> Unit) {
+@Composable private fun DetailsScreen(all: List<Transaction>, sources: List<PaymentSource>, sourceId: String, selectSource: (String) -> Unit, ensure: (YearMonth) -> Unit, toggle: (Long) -> String?, edit: (Transaction) -> Unit, lockedMonths: Set<String>, reconciliationProgress: Map<String, ReconciliationProgress>, confirmedIds:Set<Long>,suggestedIds:Set<Long>, initialMonth:YearMonth, showSearch:Boolean, closeSearch:()->Unit, openTransfer: (YearMonth, String) -> Unit, setLocked: (YearMonth, Boolean) -> Unit, lockBlockers: (YearMonth) -> List<LockBlocker>, addExpense: () -> Unit) {
     var month by remember(initialMonth) { mutableStateOf(initialMonth) }
     if (showSearch) {
         RecoFiTransactionSearchScreen(all, sources, month, lockedMonths, closeSearch, edit)
@@ -202,6 +202,7 @@ internal fun CardMemoApp(vm: MainViewModel = viewModel()) {
     var lockedWarning by remember { mutableStateOf(false) }
     var lockFailed by remember { mutableStateOf(false) }
     var blockerMessage by remember { mutableStateOf("") }
+    var toggleError by remember { mutableStateOf<String?>(null) }
     var confirmUnlock by remember { mutableStateOf(false) }
     val listState = rememberLazyListState()
     var showMonthlySummary by remember(month, sourceId) { mutableStateOf(true) }
@@ -228,7 +229,7 @@ internal fun CardMemoApp(vm: MainViewModel = viewModel()) {
             items(rows, key = { it.id }) { item ->
                 Card(Modifier.fillMaxWidth().clickable { if(month.toString() in lockedMonths)lockedWarning=true else edit(item) }, colors = CardDefaults.cardColors(containerColor = Color.White), elevation = CardDefaults.cardElevation(defaultElevation = if (item.recurringId != null) 4.dp else 1.dp), border = when { item.id in suggestedIds -> BorderStroke(2.dp, Color(0xFFE14964)); item.recurringId != null -> BorderStroke(1.dp, Color(0xFF89A9FF)); else -> null }) { Row(Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
                     val itemLocked = month.toString() in lockedMonths
-                    if(item.id in confirmedIds||item.id in suggestedIds)Checkbox(item.id in confirmedIds, { if (itemLocked) lockedWarning = true else toggle(item.id) }) else Spacer(Modifier.width(48.dp))
+                    if(sources.firstOrNull{it.id==sourceId}?.isCard==true)Checkbox(item.id in confirmedIds, { if (itemLocked) lockedWarning = true else toggleError=toggle(item.id) }) else Spacer(Modifier.width(48.dp))
                     Column(Modifier.weight(1f)) { Text(transactionPrimaryText(item), fontWeight = FontWeight.SemiBold, maxLines = 1); Text("${transactionSecondaryText(item)}${if(item.recurringId != null) "  固定費" else ""}${if(item.id in suggestedIds) "  要確認" else ""}", fontSize = 12.sp, color = if(item.id in suggestedIds) Color(0xFFE14964) else Color.Gray,maxLines=1,overflow=TextOverflow.Ellipsis) }
                     Text(yen(item.amount), fontWeight = FontWeight.Bold)
                 } }
@@ -237,6 +238,7 @@ internal fun CardMemoApp(vm: MainViewModel = viewModel()) {
     }
     if (lockedWarning) CuteWarningDialog("この月はロック中だよ 🔒", "確定した明細を守るため、手動での消込変更もお休み中です。変更したいときは『確定済み』を押して解除してください。") { lockedWarning = false }
     if (lockFailed) CuteWarningDialog("まだ確定できません", blockerMessage.ifBlank { "未確認の明細が残っています。" }) { lockFailed = false }
+    toggleError?.let{message->CuteWarningDialog("消込できません",message){toggleError=null}}
     if(confirmUnlock) AlertDialog(onDismissRequest={confirmUnlock=false},title={Text("月次ロックを解除しますか？")},text={Text("解除すると、この月の明細や消込状態を再び変更できるようになります。")},confirmButton={Button(onClick={setLocked(month,false);confirmUnlock=false}){Text("解除する")}},dismissButton={TextButton(onClick={confirmUnlock=false}){Text("キャンセル")}})
 }
 
@@ -647,7 +649,7 @@ internal fun CardMemoApp(vm: MainViewModel = viewModel()) {
             else Text("未消込・要確認のみ",fontWeight=FontWeight.Bold,color=DeepNavy)
             TextButton(onClick={showConfirmedRows=!showConfirmedRows},modifier=Modifier.fillMaxWidth()){Text(if(showConfirmedRows)"消込済みを隠す" else "消込済み${confirmed}件を表示")}
             val visibleRows=if(showConfirmedRows)persistedRows else remainingRows
-            visibleRows.forEach{row->val tx=row.transaction;val isConfirmed=row.match?.status==ReconciliationStatus.CONFIRMED.name;Card(colors=CardDefaults.cardColors(containerColor=if(isConfirmed)Color(0xFFE9F7F1) else Color.White),modifier=Modifier.fillMaxWidth()){Column(Modifier.padding(12.dp),verticalArrangement=Arrangement.spacedBy(6.dp)){Text("カード明細　${row.entry.date}　${row.entry.merchant}　${yen(row.entry.amount)}",fontWeight=FontWeight.Bold);if(tx!=null){Text("RecoFi明細　${Instant.ofEpochMilli(tx.usedAt).atZone(ZoneId.systemDefault()).toLocalDate()}　${tx.merchant}／${tx.description}　${row.categoryName.orEmpty()}　${yen(tx.amount)}");Text(if(isConfirmed)"✓ 消込済み" else "要確認",color=if(isConfirmed)Color(0xFF187A55) else Color(0xFFE14964),fontWeight=FontWeight.Bold,fontSize=12.sp);if(!isLocked)TextButton(onClick={editReconciledTransaction=Transaction(tx.id,tx.amount,row.categoryName.orEmpty(),tx.merchant,tx.description,tx.usedAt,tx.recurringId,tx.paymentSourceId,tx.categoryId)},modifier=Modifier.fillMaxWidth()){Text("RecoFi明細を修正")}}else Text("対応するRecoFi明細がありません",color=Color(0xFFE14964));if(!isLocked&&!isConfirmed){Column{TextButton(onClick={if(tx!=null)vm?.rejectMatch(row.entry.id,tx.id);alternativeEntry=row.entry},modifier=Modifier.fillMaxWidth()){Text("対応する明細を選ぶ")};TextButton(onClick={if(tx!=null)vm?.rejectMatch(row.entry.id,tx.id);missingEntry=row.entry},modifier=Modifier.fillMaxWidth()){Text("RecoFiに記録がない")}}}}}
+            visibleRows.forEach{row->val tx=row.transaction;val isConfirmed=row.match?.status==ReconciliationStatus.CONFIRMED.name;Card(colors=CardDefaults.cardColors(containerColor=if(isConfirmed)Color(0xFFE9F7F1) else Color.White),modifier=Modifier.fillMaxWidth()){Column(Modifier.padding(12.dp),verticalArrangement=Arrangement.spacedBy(6.dp)){Text("カード明細　${row.entry.date}　${row.entry.merchant}　${yen(row.entry.amount)}",fontWeight=FontWeight.Bold);if(tx!=null){Text("RecoFi明細　${Instant.ofEpochMilli(tx.usedAt).atZone(ZoneId.systemDefault()).toLocalDate()}　${tx.merchant}／${tx.description}　${row.categoryName.orEmpty()}　${yen(tx.amount)}");Text(if(isConfirmed)"✓ 消込済み" else "要確認",color=if(isConfirmed)Color(0xFF187A55) else Color(0xFFE14964),fontWeight=FontWeight.Bold,fontSize=12.sp);if(!isLocked)TextButton(onClick={editReconciledTransaction=Transaction(tx.id,tx.amount,row.categoryName.orEmpty(),tx.merchant,tx.description,tx.usedAt,tx.recurringId,tx.paymentSourceId,tx.categoryId)},modifier=Modifier.fillMaxWidth()){Text("RecoFi明細を修正")}}else Text("対応するRecoFi明細がありません",color=Color(0xFFE14964));if(!isLocked&&!isConfirmed){Column{TextButton(onClick={alternativeEntry=row.entry},modifier=Modifier.fillMaxWidth()){Text("対応する明細を選ぶ")};TextButton(onClick={missingEntry=row.entry},modifier=Modifier.fillMaxWidth()){Text("RecoFiに記録がない")}}}}}
             }
         }
         if (matches.isNotEmpty() && vm==null) {
