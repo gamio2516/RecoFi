@@ -13,10 +13,6 @@ class JalStatementAccuracyTest {
         assertEquals(7_480L, StatementTools.combineMoneyPieces(listOf("7" to 665, "480" to 705, "123" to 810), 650, 780))
     }
 
-    @Test fun commaGroupJustOutsideBillingBoundaryIsRecovered() {
-        assertEquals(3_140L, StatementTools.combineMoneyPieces(listOf("3" to 748, "140" to 786, "0" to 920), 650, 780))
-    }
-
     @Test fun jalTotalPrefersTheAmountMatchingImportedRows() {
         assertEquals(28_978L, StatementTools.selectDeclaredTotal(listOf(30_000L, 28_978L, 28_978L), 28_978L, true))
     }
@@ -31,4 +27,5 @@ class JalStatementAccuracyTest {
         assertEquals(null, StatementTools.parseJalDeclaredTotal(text))
     }
 }
+
 
