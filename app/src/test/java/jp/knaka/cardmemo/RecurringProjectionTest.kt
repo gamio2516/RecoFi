@@ -18,4 +18,13 @@ class RecurringProjectionTest {
         assertEquals(8,Instant.ofEpochMilli(rows.single{it.recurringId==2L}.usedAt).atZone(zone).monthValue)
     }
     @Test fun projectionStopsAfter2050(){assertTrue(projectedRecurringTransactions(listOf(monthly),2051,zone).isEmpty())}
+    @Test fun everyAnalysisReplacesPartialStoredFixedRowsButKeepsManualRows(){
+        val partialFixed=Transaction(10,1000,"固定費","Netflix","動画",java.time.LocalDate.of(2041,11,10).atStartOfDay(zone).toInstant().toEpochMilli(),recurringId=1,paymentSourceId="card",categoryId="fixed")
+        val manual=Transaction(11,500,"その他","店","手入力",java.time.LocalDate.of(2041,2,1).atStartOfDay(zone).toInstant().toEpochMilli(),paymentSourceId="card",categoryId="other")
+        val rows=analysisTransactionsForYear(listOf(partialFixed,manual),listOf(monthly,yearly),2041,zone)
+        assertEquals(14,rows.size)
+        assertEquals(24500L,rows.sumOf{it.amount})
+        assertEquals(1,rows.count{it.recurringId==1L&&Instant.ofEpochMilli(it.usedAt).atZone(zone).monthValue==11})
+        assertTrue(manual in rows)
+    }
 }
