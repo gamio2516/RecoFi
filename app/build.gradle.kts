@@ -32,8 +32,8 @@ android {
         applicationId = "jp.knaka.cardmemo"
         minSdk = 26
         targetSdk = 36
-        versionCode = 34
-        versionName = "34"
+        versionCode = 35
+        versionName = "35"
     }
 
     buildFeatures {
