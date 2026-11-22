@@ -44,6 +44,15 @@ class StatementCsvParserTest {
         assertEquals(300929L, StatementTools.parseRakutenSummaryTotal("9月お支払予定金額 300.929 本カード会員様利用分 300.929"))
     }
 
+    @Test fun rakutenSummaryCandidatesIgnoreTransactionTablesAndJoinedColumns() {
+        assertTrue(StatementTools.extractRakutenSummaryAmounts(
+            "利用日 利用店名 利用金額 支払総額 当月支払額 当月請求額 2026/06/22 店 209,800 209,800 209,800 209,800"
+        ).isEmpty())
+        val summary = "7月お支払予定金額の明細 明細中の利用金額合計 629,336 本カード会員様利用分 629,336 209,800209,800"
+        assertEquals(listOf(629_336L, 629_336L), StatementTools.extractRakutenSummaryAmounts(summary))
+        assertEquals(629_336L, StatementTools.parseRakutenSummaryTotal(summary))
+    }
+
     @Test fun repairsAmountFromAnotherResolutionToMatchPrintedTotal() {
         val date = LocalDate.of(2026, 1, 10)
         val selected = listOf(
