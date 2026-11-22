@@ -258,4 +258,3 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 internal fun shouldGenerateRecurringFor(requestedMonth: YearMonth, currentMonth: YearMonth): Boolean =
     !requestedMonth.isBefore(currentMonth)
 
-
