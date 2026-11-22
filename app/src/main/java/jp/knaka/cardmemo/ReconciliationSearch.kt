@@ -1,8 +1,10 @@
 package jp.knaka.cardmemo
 
 import java.time.Instant
+import java.time.LocalDate
 import java.time.YearMonth
 import java.time.ZoneId
+import java.time.temporal.ChronoUnit
 
 fun searchReconciliationTransactions(
     transactions: List<Transaction>,
@@ -31,4 +33,22 @@ fun searchReconciliationTransactions(
         .sortedWith(compareByDescending<Transaction> { it.usedAt }.thenByDescending { it.id })
         .toList()
 }
+
+internal fun manualRecoFiChoices(
+    transactions: List<Transaction>,
+    sourceId: String,
+    cardDate: LocalDate,
+    cardAmount: Long,
+    zoneId: ZoneId = ZoneId.systemDefault(),
+): List<Transaction> = transactions.asSequence()
+    .filter { it.paymentSourceId == sourceId }
+    .filter { it.amount == cardAmount }
+    .map { transaction ->
+        val recoFiDate = Instant.ofEpochMilli(transaction.usedAt).atZone(zoneId).toLocalDate()
+        transaction to kotlin.math.abs(ChronoUnit.DAYS.between(recoFiDate, cardDate))
+    }
+    .filter { (_, dayDifference) -> dayDifference <= 7 }
+    .sortedWith(compareBy<Pair<Transaction, Long>> { it.second }.thenByDescending { it.first.usedAt }.thenByDescending { it.first.id })
+    .map { it.first }
+    .toList()
 
