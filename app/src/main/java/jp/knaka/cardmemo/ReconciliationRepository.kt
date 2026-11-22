@@ -61,4 +61,3 @@ class ReconciliationRepository private constructor(private val db: RecoFiDatabas
  fun canLock(month:YearMonth,sources:List<PaymentSource>):List<LockBlocker>{val declarations=db.reconciliation().loadDeclarations().associateBy{it.month to it.paymentSourceId};return sources.filter{it.isCard}.mapNotNull{s->val p=progress(month,s.id);val statement=db.statements().loadStatements().firstOrNull{it.statementMonth==month.toString()&&it.paymentSourceId==s.id};when{p.imported==0&&declarations[month.toString() to s.id]?.status!="NO_ACTIVITY"->LockBlocker(s.name,missingStatement=true);p.remaining>0->LockBlocker(s.name,p.needsReview,p.unresolved);statement!=null->{val statementTotal=statement.declaredTotal?:db.statements().loadEntries().filter{it.fileHash==statement.fileHash}.sumOf{it.amount};val difference=statementTotal-reconciliationTotal(month,s.id);if(difference!=0L)LockBlocker(s.name,amountDifference=difference)else null};else->null}}}
 }
 
-
