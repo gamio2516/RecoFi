@@ -666,7 +666,7 @@ internal fun CardMemoApp(vm: MainViewModel = viewModel()) {
     duplicateName?.let { name -> AlertDialog(onDismissRequest = { duplicateName = null }, title = { Text("同じファイルは取込済みです") }, text = { Text("「$name」は以前に読み込まれています。重複した消込を防ぐため、今回は処理しませんでした。") }, confirmButton = { Button(onClick = { duplicateName = null }) { Text("確認") } }) }
     alternativeEntry?.let { entry ->
         val entryDate = LocalDate.parse(entry.date)
-        val choices = manualRecoFiChoices(transactions,sourceId,entryDate,entry.amount)
+        val choices = manualRecoFiChoices(transactions,sourceId,entryDate,entry.amount,vm?.linkedReconciliationTransactionIds().orEmpty())
         ManualReconciliationDialog(entry,choices,{alternativeEntry=null}){transactionId->val error=vm?.confirmMatch(entry.id,transactionId);if(error==null){alternativeEntry=null;reviewVersion++;status="${entry.date} ${yen(entry.amount)}を消込しました"};error}
     }
     missingEntry?.let { entry -> MissingTransactionDialog(entry, vm?.categories?.value.orEmpty(), { missingEntry = null }) { category, description -> val usedAt=LocalDate.parse(entry.date).atStartOfDay(ZoneId.systemDefault()).toInstant().toEpochMilli();val error=vm?.createMissingAndConfirm(entry.id,entry.amount,category,entry.merchant,description,usedAt,sourceId);if(error==null){missingEntry=null;reviewVersion++;status="${entry.date} ${yen(entry.amount)}を登録して消込しました"}else status="登録できませんでした：$error" } }
