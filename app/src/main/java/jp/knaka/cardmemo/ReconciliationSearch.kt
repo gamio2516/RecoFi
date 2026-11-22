@@ -39,10 +39,12 @@ internal fun manualRecoFiChoices(
     sourceId: String,
     cardDate: LocalDate,
     cardAmount: Long,
+    excludedTransactionIds: Set<Long> = emptySet(),
     zoneId: ZoneId = ZoneId.systemDefault(),
 ): List<Transaction> = transactions.asSequence()
     .filter { it.paymentSourceId == sourceId }
     .filter { it.amount == cardAmount }
+    .filter { it.id !in excludedTransactionIds }
     .map { transaction ->
         val recoFiDate = Instant.ofEpochMilli(transaction.usedAt).atZone(zoneId).toLocalDate()
         transaction to kotlin.math.abs(ChronoUnit.DAYS.between(recoFiDate, cardDate))
