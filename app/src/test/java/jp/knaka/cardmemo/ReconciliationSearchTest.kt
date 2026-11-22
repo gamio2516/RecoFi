@@ -25,5 +25,16 @@ class ReconciliationSearchTest {
         val rows = listOf(transaction(1, "2026-04-03", 500, "ETC", sourceId = "jal"))
         assertEquals(listOf(1L), searchReconciliationTransactions(rows, YearMonth.of(2026, 4), "JAL", mapOf("jal" to "JALカードSuica"), zone).map { it.id })
     }
+
+    @Test fun manualChoicesContainOnlyMatchingRecoFiTransactions() {
+        val cardDate = LocalDate.parse("2026-05-23")
+        val rows = listOf(
+            transaction(1, "2026-05-23", 9167, "貝・刺身専門店"),
+            transaction(2, "2026-05-23", 9167, "別カード", sourceId = "jal"),
+            transaction(3, "2026-05-23", 11550, "LOCAL CUT CLUB"),
+            transaction(4, "2026-06-15", 9167, "日付範囲外"),
+        )
+        assertEquals(listOf(1L), manualRecoFiChoices(rows, "rakuten", cardDate, 9167, zone).map { it.id })
+    }
 }
 
