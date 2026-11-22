@@ -16,6 +16,8 @@ class RecurringGenerationPolicyTest {
     @Test fun currentAndFutureMonthsRemainAutomatic() {
         assertTrue(shouldGenerateRecurringFor(current, current))
         assertTrue(shouldGenerateRecurringFor(YearMonth.of(2026, 12), current))
+        assertTrue(shouldGenerateRecurringFor(YearMonth.of(2050, 12), current))
+        assertFalse(shouldGenerateRecurringFor(YearMonth.of(2051, 1), current))
     }
 }
 
