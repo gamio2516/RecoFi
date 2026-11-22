@@ -42,4 +42,3 @@ class AppSettingsRepository(context: Context) {
     fun saveRecurringExpenses(items:List<RecurringExpense>)=db.runInTransaction { val dao=db.recurringExpenses();dao.upsertAll(items.map { RecurringExpenseEntity(it.id,it.amount,it.categoryId,it.merchant,it.description,it.paymentDay,it.startMonth,it.contractDate,it.paymentSourceId,it.intervalMonths,it.endDate) });dao.deleteRevisions();dao.upsertRevisions(items.flatMap { e->e.priceRevisions.map { RecurringPriceRevisionEntity(e.id,it.effectiveDate,it.amount) } });dao.loadAll().filter { old->items.none { it.id==old.id } }.forEach { dao.delete(it.id) } }
 }
 private fun stableEntryId(hash:String,row:Int):Long { var value=1125899906842597L; "$hash|$row".forEach{value=31*value+it.code};return value and Long.MAX_VALUE }
-
