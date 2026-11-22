@@ -34,7 +34,8 @@ class ReconciliationSearchTest {
             transaction(3, "2026-05-23", 11550, "LOCAL CUT CLUB"),
             transaction(4, "2026-06-15", 9167, "日付範囲外"),
         )
-        assertEquals(listOf(1L), manualRecoFiChoices(rows, "rakuten", cardDate, 9167, zone).map { it.id })
+        assertEquals(listOf(1L), manualRecoFiChoices(rows, "rakuten", cardDate, 9167, zoneId = zone).map { it.id })
+        assertEquals(emptyList<Long>(), manualRecoFiChoices(rows, "rakuten", cardDate, 9167, excludedTransactionIds = setOf(1L), zoneId = zone).map { it.id })
     }
 }
 
