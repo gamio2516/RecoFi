@@ -46,6 +46,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     init { linkExistingRecurringTransactions();ensureRecurringFor(YearMonth.now());refreshReconciliation() }
 
     fun addTransaction(amount: Long, category: String, merchant: String, description: String, usedAt: Long, paymentSourceId: String, id: Long? = null) {
+        if (!canStoreTransactionAt(usedAt)) return
         val month=YearMonth.from(Instant.ofEpochMilli(usedAt).atZone(ZoneId.systemDefault()));if(month.toString() in _lockedMonths.value)return
         val old=_transactions.value.firstOrNull{it.id==id};val item = Transaction(id ?: System.currentTimeMillis(), amount, category, merchant, description, usedAt, recurringId=old?.recurringId, paymentSourceId = paymentSourceId,categoryId=if(old != null && old.category==category)old.categoryId else settingsRepository.categoryId(category))
         updateTransactions(if (id == null) _transactions.value + item else _transactions.value.map { if (it.id == id) item else it })
@@ -105,6 +106,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }.exceptionOrNull()?.let{it.message?:"明細を紐づけできませんでした"}
     fun rejectMatch(entryId:Long,transactionId:Long){reconciliationRepository.reject(entryId,transactionId);refreshReconciliation()}
     fun createMissingAndConfirm(entryId:Long,amount:Long,category:String,merchant:String,description:String,usedAt:Long,sourceId:String):String?=runCatching{
+        require(canStoreTransactionAt(usedAt)){"2051年以降の明細は登録できません"}
         val month=YearMonth.from(Instant.ofEpochMilli(usedAt).atZone(ZoneId.systemDefault()));require(month.toString() !in _lockedMonths.value){"この月はロックされています"}
         val tx=Transaction(0L,amount,category,merchant,description,usedAt,paymentSourceId=sourceId,categoryId=settingsRepository.categoryId(category));reconciliationRepository.createAndConfirm(entryId,tx);_transactions.value=transactionRepository.load();refreshReconciliation()
     }.exceptionOrNull()?.let{it.message?:"明細を保存できませんでした"}
@@ -257,5 +259,5 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 }
 
 internal fun shouldGenerateRecurringFor(requestedMonth: YearMonth, currentMonth: YearMonth): Boolean =
-    !requestedMonth.isBefore(currentMonth)
+    !requestedMonth.isBefore(currentMonth) && !requestedMonth.isAfter(MAX_TRANSACTION_MONTH)
 
