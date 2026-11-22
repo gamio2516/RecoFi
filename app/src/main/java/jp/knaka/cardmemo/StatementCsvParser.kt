@@ -24,7 +24,7 @@ object StatementCsvParser {
             if (amount == 0L) return@mapNotNull null
             val merchant = row.getOrNull(merchantIndex).orEmpty().trim().ifBlank { "利用先不明" }
             CardStatementEntry(date, amount, merchant, row.joinToString(" "))
-        }.distinctBy { Triple(it.date, it.amount, ReconciliationMatcher.normalizeMerchant(it.merchant)) }
+        }
     }
 
     internal fun tokenize(text: String): List<List<String>> {
