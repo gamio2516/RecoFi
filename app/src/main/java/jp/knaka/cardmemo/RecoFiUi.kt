@@ -307,8 +307,24 @@ internal fun CardMemoApp(vm: MainViewModel = viewModel()) {
     LaunchedEffect(month) { ensure(month) }
     val analysis = remember(all, month, fixedOnly) { SpendingAnalysis.calculate(all, month, fixedOnly) }
     val monthRows = analysis.monthRows
-    val analysisRows = remember(all, analysis, month, annual, supportsAnnual, fixedOnly) { if (annual && supportsAnnual) all.forYear(month.year).let { rows -> if(fixedOnly) rows.filter { it.recurringId != null } else rows } else analysis.analysisRows }
-    val previousRows = remember(all, analysis, month, annual, supportsAnnual, fixedOnly) { if (annual && supportsAnnual) all.forYear(month.year - 1).let { rows -> if(fixedOnly) rows.filter { it.recurringId != null } else rows } else analysis.previousMonthRows.let { rows -> if(fixedOnly) rows.filter { it.recurringId != null } else rows } }
+    val projectedYearRows = remember(recurringExpenses,month.year,fixedOnly) { if(fixedOnly)projectedRecurringTransactions(recurringExpenses,month.year)else emptyList() }
+    val analysisRows = remember(all, analysis, month, annual, supportsAnnual, fixedOnly, projectedYearRows) {
+        when {
+            fixedOnly && projectedYearRows.isNotEmpty() -> if(annual)projectedYearRows else projectedYearRows.forMonth(month)
+            annual && supportsAnnual -> all.forYear(month.year).let { rows -> if(fixedOnly)rows.filter{it.recurringId!=null}else rows }
+            else -> analysis.analysisRows
+        }
+    }
+    val previousRows = remember(all, analysis, month, annual, supportsAnnual, fixedOnly, recurringExpenses) {
+        if(!fixedOnly) {
+            if(annual&&supportsAnnual)all.forYear(month.year-1)else analysis.previousMonthRows
+        } else if(annual&&supportsAnnual) {
+            projectedRecurringTransactions(recurringExpenses,month.year-1).ifEmpty{all.forYear(month.year-1).filter{it.recurringId!=null}}
+        } else {
+            val previousMonth=month.minusMonths(1)
+            projectedRecurringTransactions(recurringExpenses,previousMonth.year).forMonth(previousMonth).ifEmpty{all.forMonth(previousMonth).filter{it.recurringId!=null}}
+        }
+    }
     val totals = remember(analysisRows) { analysisRows.groupBy { it.category }.mapValues { it.value.sumOf(Transaction::amount) }.toList().sortedByDescending { it.second } }
     val total = totals.sumOf { it.second }
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
@@ -327,7 +343,7 @@ internal fun CardMemoApp(vm: MainViewModel = viewModel()) {
                 Canvas(Modifier.size(220.dp)) { val denominator = if (annual) maxOf(total, 1L) else maxOf(budget, total, 1L); drawArc(Color(0xFFE3E6ED), -90f, 360f, useCenter = false, style = Stroke(42f, cap = StrokeCap.Butt)); var start = -90f; totals.forEachIndexed { index, entry -> val remaining = (360f - (start + 90f)).coerceAtLeast(0f); val sweep = (entry.second.toFloat() / denominator * 360f).coerceAtMost(remaining); if (sweep > 0) drawArc(PieColors[index % PieColors.size], start, sweep, useCenter = false, style = Stroke(42f, cap = StrokeCap.Butt)); start += sweep } }
                 Column(horizontalAlignment = Alignment.CenterHorizontally) { val overBudget = !annual && budget > 0 && total > budget; val emphasizeOver = overBudget && !fixedOnly; if (overBudget) Text("予算オーバー", color = Color(0xFFFF1738), fontSize = 15.sp, fontWeight = FontWeight.ExtraBold); Text(if (annual) "年間支出" else "現在の支出", color = Color.Gray, fontSize = 12.sp, fontWeight = FontWeight.Normal); Text(yen(total), fontSize = 22.sp, fontWeight = FontWeight.Bold, color = if (emphasizeOver) Color(0xFFFF1738) else DeepNavy); if (!annual && budget > 0) { Text("予算比 ${total * 100 / budget}%", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = if (emphasizeOver) Color(0xFFFF1738) else DeepNavy); Text("予算 ${yen(budget)}", fontSize = 11.sp, color = Color(0xFF202124)) } }
             }
-            totals.forEachIndexed { index, (category, amount) -> Card(Modifier.fillMaxWidth().clickable { detailCategory = category }, colors = CardDefaults.cardColors(containerColor = Color.White)) { Row(Modifier.fillMaxWidth().padding(12.dp), verticalAlignment = Alignment.CenterVertically) { Box(Modifier.size(14.dp).background(PieColors[index % PieColors.size], RoundedCornerShape(3.dp))); Spacer(Modifier.width(10.dp)); Text(category, Modifier.weight(1f)); Text("${if (fixedOnly && budget > 0) amount * 100 / budget else if(total > 0) amount * 100 / total else 0}%", fontWeight = FontWeight.SemiBold, color = if (fixedOnly) DeepNavy else Color(0xFF202124)); Spacer(Modifier.width(8.dp)); Text(yen(amount), fontWeight = FontWeight.SemiBold); Spacer(Modifier.width(6.dp)); Text("›", color = WinterBlue) } } }
+            totals.forEachIndexed { index, (category, amount) -> Card(Modifier.fillMaxWidth().clickable { detailCategory = category }, colors = CardDefaults.cardColors(containerColor = Color.White)) { Row(Modifier.fillMaxWidth().padding(12.dp), verticalAlignment = Alignment.CenterVertically) { Box(Modifier.size(14.dp).background(PieColors[index % PieColors.size], RoundedCornerShape(3.dp))); Spacer(Modifier.width(10.dp)); Text(category, Modifier.weight(1f)); Text("${if (fixedOnly && !annual && budget > 0) amount * 100 / budget else if(total > 0) amount * 100 / total else 0}%", fontWeight = FontWeight.SemiBold, color = if (fixedOnly) DeepNavy else Color(0xFF202124)); Spacer(Modifier.width(8.dp)); Text(yen(amount), fontWeight = FontWeight.SemiBold); Spacer(Modifier.width(6.dp)); Text("›", color = WinterBlue) } } }
         }
         }
     }
