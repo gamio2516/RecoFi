@@ -479,14 +479,25 @@ object StatementTools {
         }
         if (trailingGroup != null && inside.last().second.length <= 3) inside += trailingGroup
         // OCR frequently separates a printed comma-grouped amount: "5,841"
-        // becomes ["5", "841"]. Rejoin consecutive groups before parsing.
-        val joined = buildString {
-            inside.forEachIndexed { index, (_, digits) ->
-                if (index == 0 || digits.length == 3) append(digits)
-            }
+        // becomes ["5", "841"]. Only join pieces that are spatially close.
+        // If the header is read too widely, the same 330-yen value from three
+        // adjacent printed columns must remain 330, not 330330330.
+        val maxPieceGap = (columnWidth / 4).coerceIn(24, 120)
+        val clusters = mutableListOf<MutableList<Pair<Int, String>>>()
+        inside.sortedBy { it.first }.forEach { piece ->
+            val current = clusters.lastOrNull()
+            if (current == null || piece.first - current.last().first > maxPieceGap) clusters += mutableListOf(piece)
+            else current += piece
         }
-        return joined.toLongOrNull()?.let { kotlin.math.abs(it) }?.takeIf { it > 0 }
-            ?: inside.firstNotNullOfOrNull { (_, digits) -> digits.toLongOrNull()?.takeIf { it > 0 } }
+        val zoneCenter = if (zoneRight == Int.MAX_VALUE) zoneLeft + columnWidth / 2 else (zoneLeft + zoneRight) / 2
+        return clusters.mapNotNull { cluster ->
+            val joined = buildString {
+                cluster.forEachIndexed { index, (_, digits) -> if (index == 0 || digits.length == 3) append(digits) }
+            }
+            joined.toLongOrNull()?.let { kotlin.math.abs(it) }?.takeIf { it > 0 }?.let { amount ->
+                Triple(amount, cluster.map { it.first }.average(), cluster.size)
+            }
+        }.minWithOrNull(compareBy<Triple<Long, Double, Int>> { kotlin.math.abs(it.second - zoneCenter) }.thenByDescending { it.third })?.first
     }
 
     private fun parseRow(raw: String, month: YearMonth, billingAmount: Long, isJal: Boolean = false): CardStatementEntry? {
