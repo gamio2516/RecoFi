@@ -92,6 +92,15 @@ class StatementCsvParserTest {
         assertTrue(680 in bounds!!.first until bounds.second)
     }
 
+    @Test fun repeatedAmountsFromAdjacentColumnsAreNotConcatenated() {
+        assertEquals(330L, StatementTools.combineMoneyPieces(
+            listOf("330" to 1_000, "330" to 1_250, "330" to 1_500), 900, 1_600
+        ))
+        assertEquals(3_140L, StatementTools.combineMoneyPieces(
+            listOf("3" to 1_190, "140" to 1_230), 1_100, 1_350
+        ))
+    }
+
     @Test fun recognizesJalStatementAndTotal() {
         assertTrue(StatementTools.isJalStatement("JALカードSuica ご利用代金明細書"))
         assertEquals(28_978L, StatementTools.parseJalDeclaredTotal("ご請求額合計 28,978"))
