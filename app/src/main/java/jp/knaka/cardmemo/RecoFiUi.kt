@@ -1,3 +1,6 @@
+Warning: truncated output (original token count: 30700)
+Total output lines: 907
+
 package jp.knaka.cardmemo
 
 import android.os.Bundle
@@ -305,25 +308,14 @@ internal fun CardMemoApp(vm: MainViewModel = viewModel()) {
     val merchantMode = analysisMode == 3
     val supportsAnnual = !calendarMode
     LaunchedEffect(month) { ensure(month) }
-    val analysis = remember(all, month, fixedOnly) { SpendingAnalysis.calculate(all, month, fixedOnly) }
-    val monthRows = analysis.monthRows
-    val projectedYearRows = remember(recurringExpenses,month.year,fixedOnly) { if(fixedOnly)projectedRecurringTransactions(recurringExpenses,month.year)else emptyList() }
-    val analysisRows = remember(all, analysis, month, annual, supportsAnnual, fixedOnly, projectedYearRows) {
-        when {
-            fixedOnly && projectedYearRows.isNotEmpty() -> if(annual)projectedYearRows else projectedYearRows.forMonth(month)
-            annual && supportsAnnual -> all.forYear(month.year).let { rows -> if(fixedOnly)rows.filter{it.recurringId!=null}else rows }
-            else -> analysis.analysisRows
-        }
+    val monthRows = remember(all,recurringExpenses,month){analysisTransactionsForMonth(all,recurringExpenses,month)}
+    val analysisRows = remember(all,recurringExpenses,month,annual,supportsAnnual,fixedOnly) {
+        val rows=if(annual&&supportsAnnual)analysisTransactionsForYear(all,recurringExpenses,month.year)else analysisTransactionsForMonth(all,recurringExpenses,month)
+        if(fixedOnly)rows.filter{it.recurringId!=null}else rows
     }
-    val previousRows = remember(all, analysis, month, annual, supportsAnnual, fixedOnly, recurringExpenses) {
-        if(!fixedOnly) {
-            if(annual&&supportsAnnual)all.forYear(month.year-1)else analysis.previousMonthRows
-        } else if(annual&&supportsAnnual) {
-            projectedRecurringTransactions(recurringExpenses,month.year-1).ifEmpty{all.forYear(month.year-1).filter{it.recurringId!=null}}
-        } else {
-            val previousMonth=month.minusMonths(1)
-            projectedRecurringTransactions(recurringExpenses,previousMonth.year).forMonth(previousMonth).ifEmpty{all.forMonth(previousMonth).filter{it.recurringId!=null}}
-        }
+    val previousRows = remember(all,recurringExpenses,month,annual,supportsAnnual,fixedOnly) {
+        val rows=if(annual&&supportsAnnual)analysisTransactionsForYear(all,recurringExpenses,month.year-1)else analysisTransactionsForMonth(all,recurringExpenses,month.minusMonths(1))
+        if(fixedOnly)rows.filter{it.recurringId!=null}else rows
     }
     val totals = remember(analysisRows) { analysisRows.groupBy { it.category }.mapValues { it.value.sumOf(Transaction::amount) }.toList().sortedByDescending { it.second } }
     val total = totals.sumOf { it.second }
@@ -596,25 +588,7 @@ internal fun CardMemoApp(vm: MainViewModel = viewModel()) {
                                     val targetSource = fixedSourceId.orEmpty()
                                     val targetMonth = fixedMonth ?: inferredMonth
                                     val occupied = targetSource.isNotBlank() && importedStatements.any { it.statementMonth == targetMonth.toString() && it.paymentSourceId == targetSource }
-                                    if (occupied) status = "この月・カードにはすでにファイルが紐づいています。先に現在のファイルを削除してください"
-                                    else { val rowsTotal=entries.sumOf{it.amount};val mismatch=result.declaredTotal?.let{it!=rowsTotal}==true;saveImported(ImportedStatement(if (targetSource.isBlank()) inferredMonth.toString() else targetMonth.toString(), targetSource, fileName, hash, entries, result.declaredTotal)); if (targetSource.isNotBlank()) setProgress(targetMonth, targetSource, entries.size, 0, 0, 0); recordImportedFile(hash); recordImportedFile(statementHash); status = if(mismatch)"取込完了。ただし帳票合計 ${yen(result.declaredTotal!!)} と取込明細合計 ${yen(rowsTotal)} が一致しません。自動消込前に内容をご確認ください" else if (targetSource.isBlank()) "${fileName} をファイル一覧へ保存しました" else "${fileName} をこの月・カードへ紐づけました" }
-                                }
-                            }
-                        }
-                        .onFailure { error -> status = "明細解析に失敗しました：${error.localizedMessage.orEmpty()}" }
-                    loading = false
-                }
-            }
-        }
-    }
-    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        Text(if (mode == SettingsPage.EXPORT) "エクスポート" else "明細取込", fontSize = 22.sp, fontWeight = FontWeight.Bold, color = DeepNavy)
-        if (fixedMonth != null) Text("${fixedMonth.year}年${fixedMonth.monthValue}月・${sources.firstOrNull { it.id == sourceId }?.name.orEmpty()}", color = Color.Gray, fontSize = 13.sp)
-        if (fixedMonth == null) Card(colors = CardDefaults.cardColors(containerColor = Color.White)) { Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-            Text("対象月", fontWeight = FontWeight.Bold)
-            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) { OutlinedButton(onClick = { month = month.minusMonths(1); matches = emptyList() }) { Text("‹") }; Text("${month.year}年 ${month.monthValue}月", fontWeight = FontWeight.Bold, color = DeepNavy); OutlinedButton(onClick = { month = month.plusMonths(1); matches = emptyList() }) { Text("›") } }
-            if (mode == SettingsPage.EXPORT) {
-                Box { OutlinedButton(onClick = { exportExpanded = true }, modifier = Modifier.fillMaxWidth()) { Text(exportSourceId?.let { id -> sources.firstOrNull { it.id == id }?.name } ?: "すべての支払方法") }; DropdownMenu(exportExpanded, { exportExpanded = false }) { DropdownMenuItem({ Text("すべての支払方法") }, { exportSourceId = null; exportExpanded = false }); sources.forEach { source -> DropdownMenuItem({ Text(source.name) }, { exportSourceId = source.id; exportExpanded = false }) } } }
+                                    if (occupied) status = "この月・カードにはすでにファイルが紐づいています。先に現在のファイ…700 tokens truncated…rce -> DropdownMenuItem({ Text(source.name) }, { exportSourceId = source.id; exportExpanded = false }) } } }
                 val suffix = exportSourceId?.let { id -> sources.firstOrNull { it.id == id }?.name?.replace(Regex("[^\\p{L}\\p{N}]+"), "_") } ?: "all"
                 Button(onClick = { csvLauncher.launch("RecoFi_${month}_$suffix.csv") }, modifier = Modifier.fillMaxWidth()) { Text("この条件でCSVを保存") }
             }
