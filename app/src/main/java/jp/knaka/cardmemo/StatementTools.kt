@@ -215,11 +215,24 @@ object StatementTools {
             .maxWithOrNull(compareBy<Map.Entry<Long, Int>> { it.value }.thenBy { it.key })?.key
     }
 
-    private fun extractRakutenSummaryAmounts(text: String): List<Long> =
-        Regex("[0-9]{1,3}(?:[,，.．][0-9]{3})+").findAll(text)
+    internal fun extractRakutenSummaryAmounts(text: String): List<Long> {
+        val compact = text.replace(Regex("[\\s　]+"), "")
+        val isSummaryArea = listOf(
+            "明細中の利用金額合計",
+            "利用金額合計",
+            "お支払予定金額の明細",
+            "お支払予定金額",
+            "支払予定金額の明細",
+            "ご請求予定金額"
+        ).any(compact::contains)
+        if (!isSummaryArea) return emptyList()
+        return Regex("(?<![0-9])[0-9]{1,3}(?:[,，.．][0-9]{3})+(?![0-9])").findAll(text)
             .mapNotNull { it.value.replace(Regex("[,，.．]"), "").toLongOrNull() }
-            .filter { it >= 1_000 && it !in 2_000L..2_099L }
+            // When OCR joins adjacent table columns, values such as
+            // "209,800209,800" can be produced. They are not card totals.
+            .filter { it in 1_000L..99_999_999L && it !in 2_000L..2_099L }
             .toList()
+    }
 
     private fun parseRakutenDeclaredTotal(text: Text): Long? {
         data class LocatedLine(val text: String, val left: Int, val right: Int, val centerY: Int, val height: Int)
