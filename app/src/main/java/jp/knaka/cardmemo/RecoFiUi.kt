@@ -1,4 +1,4 @@
-Warning: truncated output (original token count: 30558)
+Warning: truncated output (original token count: 30553)
 Total output lines: 912
 
 package jp.knaka.cardmemo
@@ -593,7 +593,7 @@ internal fun CardMemoApp(vm: MainViewModel = viewModel()) {
                                 else {
                                     val targetSource = fixedSourceId.orEmpty()
                                     val targetMonth = fixedMonth ?: inferredMonth
-                                    val occupied = targetSource.isNotBlank() && imported…558 tokens truncated…nment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) { OutlinedButton(onClick = { month = month.minusMonths(1); matches = emptyList() }) { Text("‹") }; Text("${month.year}年 ${month.monthValue}月", fontWeight = FontWeight.Bold, color = DeepNavy); OutlinedButton(onClick = { month = month.plusMonths(1); matches = emptyList() }) { Text("›") } }
+                                    val occupied = targetSource.isNotBlank() && imported…553 tokens truncated…calAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) { OutlinedButton(onClick = { month = month.minusMonths(1); matches = emptyList() }) { Text("‹") }; Text("${month.year}年 ${month.monthValue}月", fontWeight = FontWeight.Bold, color = DeepNavy); OutlinedButton(onClick = { month = month.plusMonths(1); matches = emptyList() }) { Text("›") } }
             if (mode == SettingsPage.EXPORT) {
                 Box { OutlinedButton(onClick = { exportExpanded = true }, modifier = Modifier.fillMaxWidth()) { Text(exportSourceId?.let { id -> sources.firstOrNull { it.id == id }?.name } ?: "すべての支払方法") }; DropdownMenu(exportExpanded, { exportExpanded = false }) { DropdownMenuItem({ Text("すべての支払方法") }, { exportSourceId = null; exportExpanded = false }); sources.forEach { source -> DropdownMenuItem({ Text(source.name) }, { exportSourceId = source.id; exportExpanded = false }) } } }
                 val suffix = exportSourceId?.let { id -> sources.firstOrNull { it.id == id }?.name?.replace(Regex("[^\\p{L}\\p{N}]+"), "_") } ?: "all"
@@ -603,7 +603,7 @@ internal fun CardMemoApp(vm: MainViewModel = viewModel()) {
         if (mode == SettingsPage.RECONCILE && fixedMonth != null) Card(colors = CardDefaults.cardColors(containerColor = Color(0xFFEAF0FF))) { Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
             Text("カード明細を追加", fontWeight = FontWeight.Bold, color = DeepNavy)
             Button(enabled = !loading && linkedForTarget == null, onClick = { statementLauncher.launch(arrayOf("application/pdf", "text/csv", "text/comma-separated-values", "text/*")) }, modifier = Modifier.fillMaxWidth()) { Text(if (loading) "読込中…" else if (linkedForTarget != null) "この月には取込済み" else "カード明細のPDF／CSVを選択") }
-            Text("対応：楽天カード・JALカードSuica・ビューカード", color = Color(0xFF53658F), fontSize = 12.sp)
+            Text("対応：楽天カード・ビューカード", color = Color(0xFF53658F), fontSize = 12.sp)
         } }
         if (mode == SettingsPage.RECONCILE) Card(colors = CardDefaults.cardColors(containerColor = Color(0xFFEAF0FF))) { Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
             Text("照合", fontWeight = FontWeight.Bold, color = DeepNavy)
@@ -824,7 +824,7 @@ private fun paymentSourceTypeLabel(type: PaymentSourceType) = when (type) { Paym
 }
 
 @Composable private fun TransactionRow(item: Transaction) { Card(Modifier.fillMaxWidth()) { Row(Modifier.padding(14.dp), verticalAlignment = Alignment.CenterVertically) { Column(Modifier.weight(1f)) { Text(transactionPrimaryText(item), fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis); Text(transactionSecondaryText(item), color = Color.Gray, fontSize = 12.sp,maxLines=1,overflow=TextOverflow.Ellipsis) }; Text(yen(item.amount), fontWeight = FontWeight.Bold, color = DeepNavy) } } }
-internal fun transactionPrimaryText(item:Transaction)=if(item.recurringId!=null)"${item.category} → 固定費" else item.category
+internal fun transactionPrimaryText(item:Transaction)=if(item.recurringId!=null)"${item.category}（固定費）" else item.category
 internal fun transactionSecondaryText(item:Transaction)=listOf(item.dateText(),item.merchant.takeIf{it.isNotBlank()},item.description.takeIf{it.isNotBlank()}).filterNotNull().joinToString("  ")
 internal fun visibleTemplateValues(values:List<String>,expanded:Boolean,limit:Int=6)=if(expanded)values else values.take(limit)
 @OptIn(ExperimentalLayoutApi::class)
