@@ -1,4 +1,4 @@
-Warning: truncated output (original token count: 30568)
+Warning: truncated output (original token count: 30558)
 Total output lines: 912
 
 package jp.knaka.cardmemo
@@ -239,7 +239,7 @@ internal fun CardMemoApp(vm: MainViewModel = viewModel()) {
                 Card(Modifier.fillMaxWidth().clickable { if(month.toString() in lockedMonths)lockedWarning=true else edit(item) }, colors = CardDefaults.cardColors(containerColor = Color.White), elevation = CardDefaults.cardElevation(defaultElevation = if (item.recurringId != null) 4.dp else 1.dp), border = when { item.id in suggestedIds -> BorderStroke(2.dp, Color(0xFFE14964)); item.recurringId != null -> BorderStroke(1.dp, Color(0xFF89A9FF)); else -> null }) { Row(Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
                     val itemLocked = month.toString() in lockedMonths
                     if(sources.firstOrNull{it.id==sourceId}?.isCard==true)Checkbox(item.id in confirmedIds, { if (itemLocked) lockedWarning = true else toggleError=toggle(item.id) }) else Spacer(Modifier.width(48.dp))
-                    Column(Modifier.weight(1f)) { Text(transactionPrimaryText(item), fontWeight = FontWeight.SemiBold, maxLines = 1); Text("${transactionSecondaryText(item)}${if(item.recurringId != null) "  固定費" else ""}${if(item.id in suggestedIds) "  要確認" else ""}", fontSize = 12.sp, color = if(item.id in suggestedIds) Color(0xFFE14964) else Color.Gray,maxLines=1,overflow=TextOverflow.Ellipsis) }
+                    Column(Modifier.weight(1f)) { Text(transactionPrimaryText(item), fontWeight = FontWeight.SemiBold, maxLines = 1); Text("${transactionSecondaryText(item)}${if(item.id in suggestedIds) "  要確認" else ""}", fontSize = 12.sp, color = if(item.id in suggestedIds) Color(0xFFE14964) else Color.Gray,maxLines=1,overflow=TextOverflow.Ellipsis) }
                     Text(yen(item.amount), fontWeight = FontWeight.Bold)
                 } }
             }
@@ -593,7 +593,7 @@ internal fun CardMemoApp(vm: MainViewModel = viewModel()) {
                                 else {
                                     val targetSource = fixedSourceId.orEmpty()
                                     val targetMonth = fixedMonth ?: inferredMonth
-                                   …568 tokens truncated…lignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) { OutlinedButton(onClick = { month = month.minusMonths(1); matches = emptyList() }) { Text("‹") }; Text("${month.year}年 ${month.monthValue}月", fontWeight = FontWeight.Bold, color = DeepNavy); OutlinedButton(onClick = { month = month.plusMonths(1); matches = emptyList() }) { Text("›") } }
+                                    val occupied = targetSource.isNotBlank() && imported…558 tokens truncated…nment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) { OutlinedButton(onClick = { month = month.minusMonths(1); matches = emptyList() }) { Text("‹") }; Text("${month.year}年 ${month.monthValue}月", fontWeight = FontWeight.Bold, color = DeepNavy); OutlinedButton(onClick = { month = month.plusMonths(1); matches = emptyList() }) { Text("›") } }
             if (mode == SettingsPage.EXPORT) {
                 Box { OutlinedButton(onClick = { exportExpanded = true }, modifier = Modifier.fillMaxWidth()) { Text(exportSourceId?.let { id -> sources.firstOrNull { it.id == id }?.name } ?: "すべての支払方法") }; DropdownMenu(exportExpanded, { exportExpanded = false }) { DropdownMenuItem({ Text("すべての支払方法") }, { exportSourceId = null; exportExpanded = false }); sources.forEach { source -> DropdownMenuItem({ Text(source.name) }, { exportSourceId = source.id; exportExpanded = false }) } } }
                 val suffix = exportSourceId?.let { id -> sources.firstOrNull { it.id == id }?.name?.replace(Regex("[^\\p{L}\\p{N}]+"), "_") } ?: "all"
@@ -824,7 +824,7 @@ private fun paymentSourceTypeLabel(type: PaymentSourceType) = when (type) { Paym
 }
 
 @Composable private fun TransactionRow(item: Transaction) { Card(Modifier.fillMaxWidth()) { Row(Modifier.padding(14.dp), verticalAlignment = Alignment.CenterVertically) { Column(Modifier.weight(1f)) { Text(transactionPrimaryText(item), fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis); Text(transactionSecondaryText(item), color = Color.Gray, fontSize = 12.sp,maxLines=1,overflow=TextOverflow.Ellipsis) }; Text(yen(item.amount), fontWeight = FontWeight.Bold, color = DeepNavy) } } }
-internal fun transactionPrimaryText(item:Transaction)=item.description.ifBlank{item.merchant.ifBlank{item.category}}
+internal fun transactionPrimaryText(item:Transaction)=if(item.recurringId!=null)"${item.category} → 固定費" else item.category
 internal fun transactionSecondaryText(item:Transaction)=listOf(item.dateText(),item.merchant.takeIf{it.isNotBlank()},item.description.takeIf{it.isNotBlank()}).filterNotNull().joinToString("  ")
 internal fun visibleTemplateValues(values:List<String>,expanded:Boolean,limit:Int=6)=if(expanded)values else values.take(limit)
 @OptIn(ExperimentalLayoutApi::class)
