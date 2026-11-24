@@ -1,5 +1,5 @@
-Warning: truncated output (original token count: 30700)
-Total output lines: 907
+Warning: truncated output (original token count: 30785)
+Total output lines: 911
 
 package jp.knaka.cardmemo
 
@@ -159,11 +159,15 @@ internal fun CardMemoApp(vm: MainViewModel = viewModel()) {
                 AppTab.entries.forEach { item -> NavigationBarItem(selected = tab == item, onClick = { tab = item; when (item) { AppTab.DETAILS -> { detailsMonth=YearMonth.now();detailsTool = null;showTransactionSearch=false; detailsHomeKey++ }; AppTab.ANALYSIS -> analysisHomeKey++; AppTab.SETTINGS -> { requestedSettingsPage = null; settingsHomeKey++ } } }, colors = NavigationBarItemDefaults.colors(selectedIconColor = Color(0xFF087A63), selectedTextColor = Color(0xFF202124), unselectedTextColor = Color(0xFF202124), indicatorColor = Color(0xFFCDEEDF)), icon = { Icon(when(item){AppTab.DETAILS->Icons.Outlined.ReceiptLong;AppTab.ANALYSIS->Icons.Outlined.Assessment;AppTab.SETTINGS->Icons.Outlined.Settings},contentDescription=item.label,modifier=Modifier.size(25.dp)) }, label = { Text(item.label) }) }
             }
         },
-        floatingActionButton = { if (tab != AppTab.SETTINGS) FloatingActionButton(onClick = { showEntry = true }, containerColor = WinterBlue) { Text("＋", color = Color.White, fontSize = 26.sp) } }
+        floatingActionButton = { if (tab != AppTab.SETTINGS) FloatingActionButton(
+            onClick = { showEntry = true },
+            containerColor = WinterBlue.copy(alpha = if (tab == AppTab.DETAILS) .72f else 1f),
+            elevation = FloatingActionButtonDefaults.elevation(defaultElevation = 3.dp, pressedElevation = 6.dp),
+        ) { Text("＋", color = Color.White, fontSize = 26.sp) } }
     ) { padding ->
         Box(Modifier.padding(padding).fillMaxSize()) {
             when (tab) {
-                AppTab.DETAILS -> key(detailsHomeKey) { if (detailsTool == null) DetailsScreen(transactions, paymentSources, selectedSourceId, { selectedSourceId = it }, vm::ensureRecurringFor, vm::refreshReconciliationState, vm::toggleConfirmed, { editItem = it }, lockedMonths, reconciliationProgress, confirmedTransactionIds, suggestedTransactionIds, detailsMonth, showTransactionSearch, {showTransactionSearch=false}, { month, source -> detailsMonth=month;detailsTool = month to source }, vm::setMonthLocked, vm::lockBlockers) { showEntry = true } else Column(Modifier.fillMaxSize().padding(16.dp)) { TextButton(onClick = { vm.refreshReconciliationState();detailsTool = null }) { Text("‹ 戻る") }; Box(Modifier.weight(1f)) { DataTransferSettings(SettingsPage.RECONCILE, transactions, paymentSources, importedStatements, lockedMonths, vm::isImportedFile, vm::recordImportedFile, vm::saveImportedStatement, vm::addSuggestedTransactions, vm::setReconciliationProgress, vm::confirmTransactions, vm::linkImportedStatement, vm::deleteImportedStatement, detailsTool!!.first, detailsTool!!.second,vm) } } }
+                AppTab.DETAILS -> key(detailsHomeKey) { if (detailsTool == null) DetailsScreen(transactions, paymentSources, selectedSourceId, { selectedSourceId = it }, vm::ensureRecurringFor, vm::refreshReconciliationState, vm::toggleConfirmed, { editItem = it }, lockedMonths, reconciliationProgress, confirmedTransactionIds, suggestedTransactionIds, detailsMonth, showTransactionSearch, { searchedMonth -> detailsMonth=searchedMonth;showTransactionSearch=false }, { month, source -> detailsMonth=month;detailsTool = month to source }, vm::setMonthLocked, vm::lockBlockers) { showEntry = true } else Column(Modifier.fillMaxSize().padding(16.dp)) { TextButton(onClick = { vm.refreshReconciliationState();detailsTool = null }) { Text("‹ 戻る") }; Box(Modifier.weight(1f)) { DataTransferSettings(SettingsPage.RECONCILE, transactions, paymentSources, importedStatements, lockedMonths, vm::isImportedFile, vm::recordImportedFile, vm::saveImportedStatement, vm::addSuggestedTransactions, vm::setReconciliationProgress, vm::confirmTransactions, vm::linkImportedStatement, vm::deleteImportedStatement, detailsTool!!.first, detailsTool!!.second,vm) } } }
                 AppTab.ANALYSIS -> key(analysisHomeKey) { AnalysisScreen(transactions, budget, defaultBudget, categories, merchantTemplates, descriptionTemplates, paymentSources, recurring, selectedSourceId, vm::ensureRecurringFor, vm::addTransaction, vm::deleteTransaction, vm::linkTransactionToRecurring, {showEntry=true}) { requestedSettingsPage=SettingsPage.BUDGET;tab=AppTab.SETTINGS;settingsHomeKey++ } }
                 AppTab.SETTINGS -> key(settingsHomeKey) { SettingsScreen(categories, merchantTemplates, descriptionTemplates, recurring, budget, defaultBudget, paymentSources, defaultPaymentSourceId, transactions, importedStatements, lockedMonths, reconciliationProgress, requestedSettingsPage, vm) }
             }
@@ -192,10 +196,10 @@ internal fun CardMemoApp(vm: MainViewModel = viewModel()) {
     Box { OutlinedButton(onClick = { expanded = true }, modifier = Modifier.fillMaxWidth(), colors = ButtonDefaults.outlinedButtonColors(containerColor = accent.copy(alpha=.12f), contentColor = accent), border = BorderStroke(1.dp, accent)) { Text(selected?.name ?: "支払方法", fontWeight = FontWeight.SemiBold) }; DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }, containerColor = Color(0xFFF4F7F6)) { sources.forEach { source -> DropdownMenuItem(text = { Row(verticalAlignment=Alignment.CenterVertically){Box(Modifier.size(12.dp).background(paymentSourceColor(source.colorKey),RoundedCornerShape(50)));Spacer(Modifier.width(8.dp));Text(source.name)} }, onClick = { onSelect(source.id); expanded = false }) } } }
 }
 
-@Composable private fun DetailsScreen(all: List<Transaction>, sources: List<PaymentSource>, sourceId: String, selectSource: (String) -> Unit, ensure: (YearMonth) -> Unit, refreshReconciliation: () -> Unit, toggle: (Long) -> String?, edit: (Transaction) -> Unit, lockedMonths: Set<String>, reconciliationProgress: Map<String, ReconciliationProgress>, confirmedIds:Set<Long>,suggestedIds:Set<Long>, initialMonth:YearMonth, showSearch:Boolean, closeSearch:()->Unit, openTransfer: (YearMonth, String) -> Unit, setLocked: (YearMonth, Boolean) -> Unit, lockBlockers: (YearMonth) -> List<LockBlocker>, addExpense: () -> Unit) {
+@Composable private fun DetailsScreen(all: List<Transaction>, sources: List<PaymentSource>, sourceId: String, selectSource: (String) -> Unit, ensure: (YearMonth) -> Unit, refreshReconciliation: () -> Unit, toggle: (Long) -> String?, edit: (Transaction) -> Unit, lockedMonths: Set<String>, reconciliationProgress: Map<String, ReconciliationProgress>, confirmedIds:Set<Long>,suggestedIds:Set<Long>, initialMonth:YearMonth, showSearch:Boolean, closeSearch:(YearMonth)->Unit, openTransfer: (YearMonth, String) -> Unit, setLocked: (YearMonth, Boolean) -> Unit, lockBlockers: (YearMonth) -> List<LockBlocker>, addExpense: () -> Unit) {
     var month by remember(initialMonth) { mutableStateOf(initialMonth) }
     if (showSearch) {
-        RecoFiTransactionSearchScreen(all, sources, month, lockedMonths, closeSearch, edit)
+        RecoFiTransactionSearchScreen(all, sources, month, lockedMonths, { searchedMonth -> month=searchedMonth;closeSearch(searchedMonth) }, edit)
         return
     }
     var onlyOpen by remember { mutableStateOf(false) }
@@ -250,7 +254,7 @@ internal fun CardMemoApp(vm: MainViewModel = viewModel()) {
     sources: List<PaymentSource>,
     initialMonth: YearMonth,
     lockedMonths: Set<String>,
-    back: () -> Unit,
+    back: (YearMonth) -> Unit,
     edit: (Transaction) -> Unit,
 ) {
     var month by remember(initialMonth) { mutableStateOf(initialMonth) }
@@ -259,7 +263,7 @@ internal fun CardMemoApp(vm: MainViewModel = viewModel()) {
     val sourceNames = sources.associate { it.id to it.name }
     val rows = searchReconciliationTransactions(all, month, query, sourceNames)
     Column(Modifier.fillMaxSize().padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-        TextButton(onClick = back, contentPadding = PaddingValues(0.dp)) { Text("‹ 明細に戻る") }
+        TextButton(onClick = { back(month) }, contentPadding = PaddingValues(0.dp)) { Text("‹ 明細に戻る") }
         Text("RecoFi明細を検索", fontSize = 22.sp, fontWeight = FontWeight.Bold, color = DeepNavy)
         MonthHeader(month, { month = month.minusMonths(1) }, { month = month.plusMonths(1) })
         OutlinedTextField(
@@ -587,8 +591,7 @@ internal fun CardMemoApp(vm: MainViewModel = viewModel()) {
                                 else {
                                     val targetSource = fixedSourceId.orEmpty()
                                     val targetMonth = fixedMonth ?: inferredMonth
-                                    val occupied = targetSource.isNotBlank() && importedStatements.any { it.statementMonth == targetMonth.toString() && it.paymentSourceId == targetSource }
-                                    if (occupied) status = "この月・カードにはすでにファイルが紐づいています。先に現在のファイ…700 tokens truncated…rce -> DropdownMenuItem({ Text(source.name) }, { exportSourceId = source.id; exportExpanded = false }) } } }
+           …785 tokens truncated…rce -> DropdownMenuItem({ Text(source.name) }, { exportSourceId = source.id; exportExpanded = false }) } } }
                 val suffix = exportSourceId?.let { id -> sources.firstOrNull { it.id == id }?.name?.replace(Regex("[^\\p{L}\\p{N}]+"), "_") } ?: "all"
                 Button(onClick = { csvLauncher.launch("RecoFi_${month}_$suffix.csv") }, modifier = Modifier.fillMaxWidth()) { Text("この条件でCSVを保存") }
             }
