@@ -32,8 +32,8 @@ android {
         applicationId = "jp.knaka.cardmemo"
         minSdk = 26
         targetSdk = 36
-        versionCode = 45
-        versionName = "45"
+        versionCode = 46
+        versionName = "46"
     }
 
     buildFeatures {
@@ -113,4 +113,3 @@ dependencies {
     testImplementation("androidx.test:core:1.7.0")
     testImplementation("org.robolectric:robolectric:4.16.1")
 }
-
