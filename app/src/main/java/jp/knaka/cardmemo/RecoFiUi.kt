@@ -1,6 +1,3 @@
-Warning: truncated output (original token count: 30553)
-Total output lines: 912
-
 package jp.knaka.cardmemo
 
 import android.os.Bundle
@@ -593,7 +590,24 @@ internal fun CardMemoApp(vm: MainViewModel = viewModel()) {
                                 else {
                                     val targetSource = fixedSourceId.orEmpty()
                                     val targetMonth = fixedMonth ?: inferredMonth
-                                    val occupied = targetSource.isNotBlank() && imported…553 tokens truncated…calAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) { OutlinedButton(onClick = { month = month.minusMonths(1); matches = emptyList() }) { Text("‹") }; Text("${month.year}年 ${month.monthValue}月", fontWeight = FontWeight.Bold, color = DeepNavy); OutlinedButton(onClick = { month = month.plusMonths(1); matches = emptyList() }) { Text("›") } }
+                                    val occupied = targetSource.isNotBlank() && importedStatements.any { it.statementMonth == targetMonth.toString() && it.paymentSourceId == targetSource }
+                                    if (occupied) status = "この月・カードにはすでにファイルが紐づいています。先に現在のファイルを削除してください"
+                                    else { val rowsTotal=entries.sumOf{it.amount};val mismatch=result.declaredTotal?.let{it!=rowsTotal}==true;saveImported(ImportedStatement(if (targetSource.isBlank()) inferredMonth.toString() else targetMonth.toString(), targetSource, fileName, hash, entries, result.declaredTotal)); if (targetSource.isNotBlank()) setProgress(targetMonth, targetSource, entries.size, 0, 0, 0); recordImportedFile(hash); recordImportedFile(statementHash); status = if(mismatch)"取込完了。ただし帳票合計 ${yen(result.declaredTotal!!)} と取込明細合計 ${yen(rowsTotal)} が一致しません。自動消込前に内容をご確認ください" else if (targetSource.isBlank()) "${fileName} をファイル一覧へ保存しました" else "${fileName} をこの月・カードへ紐づけました" }
+                                }
+                            }
+                        }
+                        .onFailure { error -> status = "明細解析に失敗しました：${error.localizedMessage.orEmpty()}" }
+                    loading = false
+                }
+            }
+        }
+    }
+    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        Text(if (mode == SettingsPage.EXPORT) "エクスポート" else "明細取込", fontSize = 22.sp, fontWeight = FontWeight.Bold, color = DeepNavy)
+        if (fixedMonth != null) Text("${fixedMonth.year}年${fixedMonth.monthValue}月・${sources.firstOrNull { it.id == sourceId }?.name.orEmpty()}", color = Color.Gray, fontSize = 13.sp)
+        if (fixedMonth == null) Card(colors = CardDefaults.cardColors(containerColor = Color.White)) { Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Text("対象月", fontWeight = FontWeight.Bold)
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) { OutlinedButton(onClick = { month = month.minusMonths(1); matches = emptyList() }) { Text("‹") }; Text("${month.year}年 ${month.monthValue}月", fontWeight = FontWeight.Bold, color = DeepNavy); OutlinedButton(onClick = { month = month.plusMonths(1); matches = emptyList() }) { Text("›") } }
             if (mode == SettingsPage.EXPORT) {
                 Box { OutlinedButton(onClick = { exportExpanded = true }, modifier = Modifier.fillMaxWidth()) { Text(exportSourceId?.let { id -> sources.firstOrNull { it.id == id }?.name } ?: "すべての支払方法") }; DropdownMenu(exportExpanded, { exportExpanded = false }) { DropdownMenuItem({ Text("すべての支払方法") }, { exportSourceId = null; exportExpanded = false }); sources.forEach { source -> DropdownMenuItem({ Text(source.name) }, { exportSourceId = source.id; exportExpanded = false }) } } }
                 val suffix = exportSourceId?.let { id -> sources.firstOrNull { it.id == id }?.name?.replace(Regex("[^\\p{L}\\p{N}]+"), "_") } ?: "all"
@@ -760,6 +774,8 @@ private fun paymentSourceTypeLabel(type: PaymentSourceType) = when (type) { Paym
     var draggingItem by remember { mutableStateOf<String?>(null) }
     var dragOffset by remember { mutableFloatStateOf(0f) }
     val moveThreshold = with(androidx.compose.ui.platform.LocalDensity.current) { 54.dp.toPx() }
+    val latestSaveOrder by rememberUpdatedState(saveOrder)
+    val latestValues by rememberUpdatedState(values)
     LaunchedEffect(values) { localValues = values }
 
     LazyColumn(modifier, state = listState, verticalArrangement = Arrangement.spacedBy(8.dp), contentPadding = PaddingValues(bottom = 20.dp)) {
@@ -767,10 +783,10 @@ private fun paymentSourceTypeLabel(type: PaymentSourceType) = when (type) { Paym
             val isDragging = draggingItem == item
             Card(
                 Modifier.fillMaxWidth().zIndex(if(isDragging)1f else 0f).graphicsLayer { translationY=if(isDragging)dragOffset else 0f; shadowElevation=if(isDragging)16f else 0f; scaleX=if(isDragging)1.02f else 1f; scaleY=if(isDragging)1.02f else 1f }
-                    .pointerInput(item,localValues) { detectDragGesturesAfterLongPress(
+                    .pointerInput(item, moveThreshold) { detectDragGesturesAfterLongPress(
                         onDragStart={draggingItem=item;dragOffset=0f},
-                        onDragCancel={draggingItem=null;dragOffset=0f},
-                        onDragEnd={draggingItem=null;dragOffset=0f;saveOrder(localValues)},
+                        onDragCancel={draggingItem=null;dragOffset=0f;localValues=latestValues},
+                        onDragEnd={draggingItem=null;dragOffset=0f;if(localValues!=latestValues)latestSaveOrder(localValues)},
                         onDrag={change,amount->change.consume();dragOffset+=amount.y;val current=localValues.indexOf(item);val direction=when{dragOffset>moveThreshold->1;dragOffset< -moveThreshold->-1;else->0};val target=current+direction;if(direction!=0&&target in localValues.indices){localValues=moveItem(localValues,current,target);dragOffset-=direction*moveThreshold}}
                     ) },
                 elevation = CardDefaults.cardElevation(defaultElevation = if(isDragging)8.dp else 1.dp),
@@ -796,10 +812,12 @@ private fun paymentSourceTypeLabel(type: PaymentSourceType) = when (type) { Paym
 
 @Composable private fun ReorderableRecurringList(values:List<RecurringExpense>,modifier:Modifier=Modifier,saveOrder:(List<RecurringExpense>)->Unit,edit:(RecurringExpense)->Unit,duplicate:(Long)->Unit,delete:(RecurringExpense)->Unit){
     var localValues by remember{mutableStateOf(values)};var draggingId by remember{mutableStateOf<Long?>(null)};var dragOffset by remember{mutableFloatStateOf(0f)};val moveThreshold=with(androidx.compose.ui.platform.LocalDensity.current){92.dp.toPx()}
+    val latestSaveOrder by rememberUpdatedState(saveOrder)
+    val latestValues by rememberUpdatedState(values)
     LaunchedEffect(values){localValues=values}
     LazyColumn(modifier,verticalArrangement=Arrangement.spacedBy(8.dp),contentPadding=PaddingValues(bottom=20.dp)){
         itemsIndexed(localValues,key={_,item->item.id}){_,item->val isDragging=draggingId==item.id
-            Card(Modifier.fillMaxWidth().zIndex(if(isDragging)1f else 0f).graphicsLayer{translationY=if(isDragging)dragOffset else 0f;shadowElevation=if(isDragging)16f else 0f;scaleX=if(isDragging)1.02f else 1f;scaleY=if(isDragging)1.02f else 1f}.pointerInput(item.id){detectDragGesturesAfterLongPress(onDragStart={draggingId=item.id;dragOffset=0f},onDragCancel={draggingId=null;dragOffset=0f},onDragEnd={draggingId=null;dragOffset=0f;saveOrder(localValues)},onDrag={change,amount->change.consume();dragOffset+=amount.y;val current=localValues.indexOfFirst{it.id==item.id};val direction=when{dragOffset>moveThreshold->1;dragOffset< -moveThreshold->-1;else->0};val target=current+direction;if(direction!=0&&target in localValues.indices){localValues=moveItem(localValues,current,target);dragOffset-=direction*moveThreshold}})}.clickable{edit(item)},elevation=CardDefaults.cardElevation(defaultElevation=if(isDragging)8.dp else 1.dp),colors=CardDefaults.cardColors(containerColor=if(isDragging)Color(0xFFF3F7FF)else Color.White)){
+            Card(Modifier.fillMaxWidth().zIndex(if(isDragging)1f else 0f).graphicsLayer{translationY=if(isDragging)dragOffset else 0f;shadowElevation=if(isDragging)16f else 0f;scaleX=if(isDragging)1.02f else 1f;scaleY=if(isDragging)1.02f else 1f}.pointerInput(item.id, moveThreshold){detectDragGesturesAfterLongPress(onDragStart={draggingId=item.id;dragOffset=0f},onDragCancel={draggingId=null;dragOffset=0f;localValues=latestValues},onDragEnd={draggingId=null;dragOffset=0f;if(localValues!=latestValues)latestSaveOrder(localValues)},onDrag={change,amount->change.consume();dragOffset+=amount.y;val current=localValues.indexOfFirst{it.id==item.id};val direction=when{dragOffset>moveThreshold->1;dragOffset< -moveThreshold->-1;else->0};val target=current+direction;if(direction!=0&&target in localValues.indices){localValues=moveItem(localValues,current,target);dragOffset-=direction*moveThreshold}})}.clickable{edit(item)},elevation=CardDefaults.cardElevation(defaultElevation=if(isDragging)8.dp else 1.dp),colors=CardDefaults.cardColors(containerColor=if(isDragging)Color(0xFFF3F7FF)else Color.White)){
                 Column(Modifier.padding(14.dp)){Text(item.merchant.ifBlank{item.description.ifBlank{item.category}},fontWeight=FontWeight.Bold);if(item.description.isNotBlank())Text(item.description,color=Color.Gray,fontSize=12.sp);Text("${item.contractDate.replace('-', '/')}契約 ・ ${intervalLabel(item.intervalMonths)}・${recurringPaymentDayLabel(item.intervalMonths,item.paymentDay)}",color=Color.Gray,fontSize=12.sp);Text("${item.category}  ${yen(item.priceRevisions.lastOrNull()?.amount?:item.amount)}${item.endDate?.let{" ・ ${it.replace('-', '/')}終了"}.orEmpty()}",color=Color.Gray,fontSize=13.sp);Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.End){TextButton(onClick={duplicate(item.id)}){Text("複製")};TextButton(onClick={delete(item)}){Text("削除")}}}
             }
         }
@@ -894,4 +912,3 @@ private fun intervalLabel(months: Int): String = if (months >= 12 && months % 12
 }
 
 private fun normalizeForLearning(value: String): String = MerchantSpendingAnalysis.normalize(value)
-
